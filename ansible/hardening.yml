@@ -1,0 +1,96 @@
+---
+# Cybersecurity Hardening Playbook
+# IT Administrator - Zambaiti (2018)
+# Deploys security stack across infrastructure
+
+- name: Deploy Security Hardening
+  hosts: all
+  become: yes
+
+  vars:
+    snort_version: "2.9.12"
+    ossec_version: "2.9.4"
+
+  tasks:
+    - name: Update all packages
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Install security tools
+      yum:
+        name:
+          - aide
+          - rkhunter
+          - clamav
+          - fail2ban
+          - audit
+        state: present
+
+    - name: Run Linux hardening script
+      script: ../scripts/harden_linux.sh
+
+    - name: Deploy OSSEC agent
+      script: ../scripts/deploy_ossec.sh
+
+- name: Deploy Snort IDS on Network Sensors
+  hosts: ids_sensors
+  become: yes
+
+  tasks:
+    - name: Install Snort dependencies
+      yum:
+        name:
+          - libpcap-devel
+          - pcre-devel
+          - libdnet-devel
+          - daq
+        state: present
+
+    - name: Deploy Snort configuration
+      copy:
+        src: ../config/snort.conf
+        dest: /etc/snort/snort.conf
+        owner: root
+        mode: '0644'
+
+    - name: Enable Snort service
+      systemd:
+        name: snort
+        enabled: yes
+        state: started
+
+- name: Deploy ELK Stack
+  hosts: elk_server
+  become: yes
+
+  tasks:
+    - name: Install Elasticsearch
+      yum:
+        name: elasticsearch-6.5.0
+        state: present
+
+    - name: Install Logstash
+      yum:
+        name: logstash-6.5.0
+        state: present
+
+    - name: Deploy Logstash pipeline
+      copy:
+        src: ../elk/logstash.conf
+        dest: /etc/logstash/conf.d/security.conf
+
+    - name: Install Kibana
+      yum:
+        name: kibana-6.5.0
+        state: present
+
+    - name: Start ELK services
+      systemd:
+        name: "{{ item }}"
+        enabled: yes
+        state: started
+      loop:
+        - elasticsearch
+        - logstash
+        - kibana
