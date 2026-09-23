@@ -1,6 +1,5 @@
 ---
 # Cybersecurity Hardening Playbook
-# IT Administrator - Zambaiti (2018)
 # Deploys security stack across infrastructure
 
 - name: Deploy Security Hardening

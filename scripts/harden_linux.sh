@@ -1,12 +1,11 @@
 #!/bin/bash
 # Linux Security Hardening Script
-# IT Administrator - Zambaiti (2018)
 #
 # CIS Benchmark-based hardening for CentOS/RHEL 7 servers
 
 set -e
 
-echo "=== Zambaiti Linux Hardening Script ==="
+echo "=== Linux Hardening Script ==="
 echo "Date: $(date)"
 echo "Host: $(hostname)"
 
