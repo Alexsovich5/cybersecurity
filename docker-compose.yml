@@ -1,0 +1,20 @@
+---
+version: "2.4"
+name: cybersecurity
+
+networks:
+  lab:
+    ipam:
+      config:
+        - subnet: 172.48.0.0/24
+
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: docker/tests/Dockerfile
+    image: cybersecurity:tests
+    volumes:
+      - .:/src
+    networks:
+      - lab

@@ -62,7 +62,7 @@ The ID F10 is deliberately unused: the ELK server RPM play was moved to §3 beca
 ## 4. Architecture
 
 ```
-                      lab network 10.42.0.0/24 (compose "lab")
+                      lab network 172.48.0.0/24 (compose "lab")
  ┌────────────────────────────────────────────────────────────────────────────────┐
  │                                                                                │
  │  tests (python:3.6.6)  ── scapy packets ──► snort (CentOS 7, snort -i eth0)    │
@@ -121,7 +121,7 @@ Settings that are enforced. The values are the ones in the existing script:
 ### 5.2 Snort fast alert line (input to Logstash)
 
 ```
-07/20-14:03:11.123456  [**] [1:1000002:1] LAB telnet connection attempt [**] [Classification: Attempted Administrator Privilege Gain] [Priority: 1] {TCP} 10.42.0.20:40000 -> 10.42.0.10:23
+07/20-14:03:11.123456  [**] [1:1000002:1] LAB telnet connection attempt [**] [Classification: Attempted Administrator Privilege Gain] [Priority: 1] {TCP} 172.48.0.20:40000 -> 172.48.0.10:23
 ```
 
 Local rules (`config/rules/local.rules`, SIDs 1000001–1000004):
@@ -139,15 +139,15 @@ Local rules (`config/rules/local.rules`, SIDs 1000001–1000004):
 - `config/ossec_local_rules.xml` (installed as `/var/ossec/rules/local_rules.xml`):
   - `100010` level 10, `if_sid 5700` (sshd), match `ROOT LOGIN REFUSED`: "Root SSH login attempt blocked by hardening policy".
   - `100020` level 12, `<if_sid>5720</if_sid>`: "SSH authentication failures from one source (possible brute force)". It is a child of the stock composite rule 5720 (`sshd_rules.xml`: level 10, `frequency 6`, `if_matched_sid 5716`, `same_source_ip`), which already matches repeated failures first. A separate `if_matched_sid 5716` rule would never be reached. 100020 only raises the level and gives a lab-specific description.
-  - OSSEC's frequency check (`analysisd/eventinfo.c`) needs more earlier matches than the `frequency` value (8 events in total for `frequency 6`), so the brute-force fixture holds **10** `Failed password` lines from `10.42.0.20`.
+  - OSSEC's frequency check (`analysisd/eventinfo.c`) needs more earlier matches than the `frequency` value (8 events in total for `frequency 6`), so the brute-force fixture holds **10** `Failed password` lines from `172.48.0.20`.
 - JSON alert (one per line in `/var/ossec/logs/alerts/alerts.json`). OSSEC 2.9.4's `src/analysisd/format/to_json.c` emits only these keys, each only when the value is set: `rule.{level,comment,sidid,cve,info}`, `action`, `srcip`, `srcport`, `srcuser`, `dstip`, `dstport`, `dstuser`, `location`, `full_log`, `file`. There is no rule group, alert id, timestamp or hostname. Expected shape:
-  `{"rule":{"level":12,"comment":"SSH authentication failures from one source (possible brute force)","sidid":100020},"srcip":"10.42.0.20","dstuser":"root","location":"/var/log/lab/secure","full_log":"Jul 20 14:03:11 target sshd[2211]: Failed password for root from 10.42.0.20 port 40022 ssh2"}`
+  `{"rule":{"level":12,"comment":"SSH authentication failures from one source (possible brute force)","sidid":100020},"srcip":"172.48.0.20","dstuser":"root","location":"/var/log/lab/secure","full_log":"Jul 20 14:03:11 target sshd[2211]: Failed password for root from 172.48.0.20 port 40022 ssh2"}`
   T8 captures a real alert from the built image into `tests/fixtures/ossec_alert.json`. That fixture is the contract: if it differs from the shape above, this section is corrected to match it in the same commit.
 
 ### 5.4 pfSense filterlog (simulated, UDP syslog to Logstash:5140)
 
 ```
-<134>Jul 20 14:03:11 filterlog: 5,,,1000000103,em0,match,block,in,4,0x0,,64,12345,0,none,6,tcp,60,8.8.8.8,10.42.0.10,51234,22,0,S,123456,,64240,,mss
+<134>Jul 20 14:03:11 filterlog: 5,,,1000000103,em0,match,block,in,4,0x0,,64,12345,0,none,6,tcp,60,8.8.8.8,172.48.0.10,51234,22,0,S,123456,,64240,,mss
 ```
 
 Logstash extracts `fw_rule`, `fw_interface`, `fw_reason`, `fw_action`, `fw_direction`, `proto`, `src_ip`, `dst_ip`, `src_port`, `dst_port` for IPv4 TCP/UDP. Any other line is tagged `_pfsense_unparsed`.
@@ -195,7 +195,7 @@ The library functions (`tools/correlate.py`, importable, Python 3.6-compatible, 
 - `parse_since(s) -> datetime.timedelta` for `30s`, `15m`, `2h`, `1d`.
 - `correlate(snort_events, ossec_events, window_seconds, min_events) -> list[dict]`. Each event is `{"@timestamp": iso, "src_ip": str, ...}`. An IP matches when at least one Snort event and one OSSEC event from that IP fall within `window_seconds` of each other and the total count is ≥ `min_events`. Each result is `{src_ip, snort_count, ossec_count, first_seen, last_seen, sids, rule_ids, min_priority, max_level}`, sorted by (min_priority asc, max_level desc, src_ip).
 - `fetch_events(es, index_pattern, since, until) -> list[dict]` (elasticsearch-py `helpers.scan` with a `range` on `@timestamp` and `exists: src_ip`).
-- `--format ansible` prints `{"block_ips": ["10.42.0.20", ...]}`.
+- `--format ansible` prints `{"block_ips": ["172.48.0.20", ...]}`.
 
 ### 5.8 `ansible/respond_block_ip.yml`
 

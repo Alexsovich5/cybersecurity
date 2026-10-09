@@ -10,9 +10,10 @@ Conventions:
 - A task that adds a `test-*` target also appends it to the `test:` prerequisite list.
 - Every compose service that builds an image uses the repo root as its build context:
   `build: {context: ., dockerfile: docker/<svc>/Dockerfile}`. Dockerfiles `COPY` repo paths such as `scripts/...` and `config/...`, and the root `.dockerignore` applies to all of them.
-- In T1, `make build` builds only `tests`. From T2 on it builds `base` first, because `snort`, `ossec` and `target` are `FROM cybersec-base:2018`.
+- In T1, `make build` builds only `tests`. From T2 on it builds `base` first, because `snort`, `ossec` and `target` are `FROM cybersecurity:base`.
 - The `tests` image sets `ANSIBLE_CONFIG=/src/ansible/ansible.cfg`, so every `ansible-playbook` run from `/src` picks up the lab config.
 - Plays in `ansible/hardening.yml` are referred to by tag (`hardening`, `ossec`, `snort`, `filebeat`, `elk`), never by number. Loops use `with_items:` (Ansible 2.4 has no `loop:`).
+- The Docker host is shared, so the lab stays in its own lane: compose project `cybersecurity`, images named `cybersecurity:<tag>` (`cybersecurity:tests`, `cybersecurity:base`, ...), network subnet `172.48.0.0/24`, and any port published to the host is taken from `20800`–`20899` (for example Kibana `20856:5601`, MailHog `20825:8025`).
 - OS packages are installed by exact NVR from §6. Python in `tools/` and `tests/` must run on Python 3.6. Bash must run on CentOS 7's bash 4.2.
 
 ---
@@ -29,8 +30,8 @@ Conventions:
   - `ENV ANSIBLE_CONFIG=/src/ansible/ansible.cfg`; `WORKDIR /src`.
 - create `requirements-dev.txt`: the 30 exact pins from §6 (`ansible==2.4.6.0`).
 - create `docker-compose.yml`:
-  - format `2.4`; network `lab` (subnet `10.42.0.0/24`).
-  - service `tests`: `build: {context: ., dockerfile: docker/tests/Dockerfile}`, mounts `.:/src`.
+  - format `2.4`; top-level `name: cybersecurity`; network `lab` (subnet `172.48.0.0/24`).
+  - service `tests`: `build: {context: ., dockerfile: docker/tests/Dockerfile}`, `image: cybersecurity:tests`, mounts `.:/src`, joins `lab`.
 - create `Makefile`: `build` (`$(COMPOSE) build tests`), `test`, `test-static`, `test-unit`, `shell`, `clean`.
   - `test-static` runs `yamllint -s ansible docker-compose.yml`, `shellcheck scripts/*.sh`, `bash -n scripts/*.sh`, and `ansible-playbook -i localhost, --syntax-check ansible/hardening.yml`.
 - modify `ansible/hardening.yml`: replace the ELK play's `loop:` with `with_items:`. It is the only Ansible 2.5 keyword in the file, and 2.4's syntax check rejects it. Nothing else changes.
@@ -76,7 +77,7 @@ Replace the one Ansible 2.5 loop keyword so the playbook parses on 2.4.
 - create `docker/base/pinned-rpms.repo`: `[pinned-rpms]`, `baseurl=file:///opt/pinned-rpms`, `gpgcheck=0` (integrity comes from the sha256 list).
 - create `docker/base/pinned-rpms.txt`: one `<sha256>  <url>` line per EPEL/koji RPM in the §6 download table (fail2ban ×4, rkhunter, libdnet ×2, clamav ×4).
 - create `docker/base/fetch_pinned_rpms.sh`.
-- modify `docker-compose.yml`: service `base` (`build: {context: ., dockerfile: docker/base/Dockerfile}`, `image: cybersec-base:2018`, `platform: linux/amd64`, mounts `.:/src`).
+- modify `docker-compose.yml`: service `base` (`build: {context: ., dockerfile: docker/base/Dockerfile}`, `image: cybersecurity:base`, `platform: linux/amd64`, mounts `.:/src`).
 - modify `Makefile`: `build` builds `base` first, then the rest; add `test-base` (`$(COMPOSE) run --rm --no-deps base bats tests/bats/base.bats`); add `shellcheck docker/*/*.sh` to `test-static`.
 - create `tests/bats/base.bats`.
 
@@ -154,7 +155,7 @@ option once, add --check/--root/skip flags, and cover it with bats.
 **Goal:** The `hardening` play of `ansible/hardening.yml` hardens the `target` container idempotently, and testinfra verifies the result (F2). The playbook gets its final five-play structure.
 
 **Files**
-- create `docker/target/Dockerfile` (build context: repo root): `FROM cybersec-base:2018`; `yum install -y openssh-server-7.4p1-16.el7 openssh-clients-7.4p1-16.el7 python-2.7.5-68.el7`; add user `ansible` with NOPASSWD sudo; `COPY docker/target/entrypoint.sh /usr/local/bin/`.
+- create `docker/target/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `yum install -y openssh-server-7.4p1-16.el7 openssh-clients-7.4p1-16.el7 python-2.7.5-68.el7`; add user `ansible` with NOPASSWD sudo; `COPY docker/target/entrypoint.sh /usr/local/bin/`.
 - create `docker/target/entrypoint.sh`:
   - generate `/lab/keys/id_rsa` if missing (mode 600), install the public key for `ansible`;
   - `ssh-keygen -A`;
@@ -203,7 +204,7 @@ versions idempotently and verify host state with testinfra.
 - create `tools/traffic.py`:
   - `write DIR` produces `lab_probe.pcap`, `telnet_syn.pcap`, `xmas_scan.pcap`, `ssh_burst.pcap` (6 SYNs), `benign.pcap` (TCP handshake to 443, DNS query);
   - `send HOST [--only NAME]` sends the same packets live;
-  - the source IP defaults to `10.42.0.20` for pcaps.
+  - the source IP defaults to `172.48.0.20` for pcaps.
 - create `tests/unit/test_traffic.py`.
 - modify `Makefile`: `test-unit` also covers `test_traffic.py` (it is under `tests/unit`, so only the `py_compile` list in `test-static` changes).
 
@@ -243,7 +244,7 @@ benign packets, with unit tests on the generated pcaps.
   - keep the existing vars, pcre limits, `ac-bnfa` and fast output;
   - `# include $RULE_PATH/community.rules` becomes an optional comment.
 - create `config/rules/local.rules`: SIDs 1000001–1000004 (§5.2).
-- create `docker/snort/Dockerfile` (build context: repo root): `FROM cybersec-base:2018`; `COPY scripts/setup_snort.sh /opt/cybersec/scripts/`; `COPY config/ /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/setup_snort.sh --config-dir /opt/cybersec/config`; default `CMD ["snort","-i","eth0","-c","/etc/snort/snort.conf","-l","/var/log/snort","-A","fast","-k","none","-q"]`.
+- create `docker/snort/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `COPY scripts/setup_snort.sh /opt/cybersec/scripts/`; `COPY config/ /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/setup_snort.sh --config-dir /opt/cybersec/config`; default `CMD ["snort","-i","eth0","-c","/etc/snort/snort.conf","-l","/var/log/snort","-A","fast","-k","none","-q"]`.
 - create `tests/bats/snort.bats`.
 - modify `docker-compose.yml`: service `snort` (`build: {context: ., dockerfile: docker/snort/Dockerfile}`, `platform: linux/amd64`, `cap_add: [NET_ADMIN, NET_RAW]`, volumes `snort-logs:/var/log/snort`, `pcaps:/lab/pcaps:ro`, `./tests:/src/tests:ro`); `tests` mounts `pcaps:/lab/pcaps`.
 - modify `Makefile`: `test-snort` runs `$(COMPOSE) run --rm --no-deps tests python tools/traffic.py write /lab/pcaps`, then `$(COMPOSE) run --rm --no-deps snort bats /src/tests/bats/snort.bats`.
@@ -315,9 +316,9 @@ install a systemd unit that is only started when services are managed.
   - skip the build if `/etc/ossec-init.conf` has `VERSION="v2.9.4"`.
 - create `config/ossec.conf` (§5.3).
 - create `config/ossec_local_rules.xml`: rule 100010, and rule 100020 as a child of stock rule 5720 (`<rule id="100020" level="12"><if_sid>5720</if_sid><description>...</description></rule>`, §5.3).
-- create `docker/ossec/Dockerfile` (build context: repo root): `FROM cybersec-base:2018`; `COPY scripts/deploy_ossec.sh /opt/cybersec/scripts/`; `COPY config/ossec.conf config/ossec_local_rules.xml /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/deploy_ossec.sh --config-dir /opt/cybersec/config`; `COPY docker/ossec/entrypoint.sh /usr/local/bin/`.
+- create `docker/ossec/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `COPY scripts/deploy_ossec.sh /opt/cybersec/scripts/`; `COPY config/ossec.conf config/ossec_local_rules.xml /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/deploy_ossec.sh --config-dir /opt/cybersec/config`; `COPY docker/ossec/entrypoint.sh /usr/local/bin/`.
 - create `docker/ossec/entrypoint.sh`: `mkdir -p /var/log/lab && touch /var/log/lab/secure /var/log/secure`; `/var/ossec/bin/ossec-control start`; `exec tail -F /var/ossec/logs/ossec.log`.
-- create `tests/fixtures/secure_auth_failures.log` (real-format CentOS 7 sshd lines: 10× `Failed password for root from 10.42.0.20`, 1× `ROOT LOGIN REFUSED FROM 10.42.0.20`, 1× `Accepted publickey`).
+- create `tests/fixtures/secure_auth_failures.log` (real-format CentOS 7 sshd lines: 10× `Failed password for root from 172.48.0.20`, 1× `ROOT LOGIN REFUSED FROM 172.48.0.20`, 1× `Accepted publickey`).
 - create `tests/fixtures/ossec_alert.json` (one 100020 line captured from the running image).
 - create `tests/bats/ossec.bats`.
 - create `tests/unit/test_ossec_fixture.py`.
@@ -329,7 +330,7 @@ install a systemd unit that is only started when services are managed.
 - `ossec.bats` checks that:
   - `/var/ossec/bin/ossec-logtest -v` on single fixture lines reports `Rule id: '5716'`, `'100010'`, `'5715'`;
   - feeding the 10 failure lines to one `ossec-logtest` session reports `Rule id: '100020'` for a later line (and not for the first);
-  - after `ossec-control start` and appending the fixture to `/var/log/lab/secure`, `alerts.json` gets a line whose `rule.sidid` is 100020 and whose `srcip` is `10.42.0.20` within 30 s (poll loop);
+  - after `ossec-control start` and appending the fixture to `/var/log/lab/secure`, `alerts.json` gets a line whose `rule.sidid` is 100020 and whose `srcip` is `172.48.0.20` within 30 s (poll loop);
   - that line parses with `python -c 'import json,sys; json.loads(...)'`.
 - `test_ossec_fixture.py` checks that `ossec_alert.json` parses, that its keys are a subset of the §5.3 list (`rule`, `action`, `srcip`, `srcport`, `srcuser`, `dstip`, `dstport`, `dstuser`, `location`, `full_log`, `file`; `rule` ⊆ `level`, `comment`, `sidid`, `cve`, `info`), and that `rule.sidid == 100020`.
 
@@ -397,12 +398,12 @@ rules with change handlers gated on service management.
   - `kibana` (`elastic/kibana:6.3.2`, port 5601);
   - `filebeat` (`elastic/filebeat:6.3.2`, `user: root`, command adds `-strict.perms=false`, mounts `snort-logs` and `ossec-logs` read-only, env `SNORT_ALERT`/`OSSEC_ALERTS` pointing at the mounts);
   - `tests` mounts `snort-logs` and `ossec-logs` read-write for fixture injection.
-- create `tests/fixtures/snort_alert.fast` (one line each for SIDs 1000001–1000004, priorities 3/1/2/1, src `10.42.0.20` / `8.8.8.8`).
+- create `tests/fixtures/snort_alert.fast` (one line each for SIDs 1000001–1000004, priorities 3/1/2/1, src `172.48.0.20` / `8.8.8.8`).
 - create `tests/integration/test_pipeline.py`.
 - modify `Makefile`: `test-pipeline` runs `$(COMPOSE) up -d elasticsearch logstash filebeat`, then `$(COMPOSE) run --rm tests pytest tests/integration/test_pipeline.py`. Before pytest it waits 10 s and fails with `filebeat cannot read shipped logs: permission denied` if `$(COMPOSE) logs filebeat` contains `permission denied`; it runs the same check again when pytest fails, so a permission problem never shows up as a bare document timeout.
 
 **Tests to write first:** `test_pipeline.py`. The fixture waits for ES health and then appends each fixture line with a unique marker (Snort lines from `snort_alert.fast`, the OSSEC line from `ossec_alert.json`). Tests check that:
-- `security-snort-*` has a doc with `sid == 1000002`, `priority == 1`, `src_ip == "10.42.0.20"`, `dst_port == 23`;
+- `security-snort-*` has a doc with `sid == 1000002`, `priority == 1`, `src_ip == "172.48.0.20"`, `dst_port == 23`;
 - `security-ossec-*` has `rule_id == 100020`, `alert_level == 12` and `src_ip`;
 - every injected line produced exactly one document, none tagged `_grokparsefailure`, and each has `hostname` and no `host` field;
 - the snort doc from `8.8.8.8` has `geoip.country_code2`.
@@ -524,8 +525,8 @@ shared config, and pin the illustrative ELK server play to 6.3.2.
 
 **Files**
 - modify `docker-compose.yml`:
-  - `snort` runs its live CMD with a static IP `10.42.0.10`;
-  - `tests` gets static IP `10.42.0.20`, `cap_add: [NET_RAW]`, and mounts `ossec-input:/lab/ossec-input`;
+  - `snort` runs its live CMD with a static IP `172.48.0.10`;
+  - `tests` gets static IP `172.48.0.20`, `cap_add: [NET_RAW]`, and mounts `ossec-input:/lab/ossec-input`;
   - `ossec` runs its entrypoint;
   - `depends_on` with `condition: service_healthy` for elasticsearch.
 - modify `Makefile`:
@@ -537,9 +538,9 @@ shared config, and pin the illustrative ELK server play to 6.3.2.
 - create `tests/integration/test_end_to_end.py`.
 
 **Tests to write first:** `test_end_to_end.py`:
-- `traffic.py send snort --only telnet_syn` gives a `security-snort-*` doc with `sid == 1000002`, `src_ip == "10.42.0.20"` and `dst_ip == "10.42.0.10"` within 60 s;
+- `traffic.py send snort --only telnet_syn` gives a `security-snort-*` doc with `sid == 1000002`, `src_ip == "172.48.0.20"` and `dst_ip == "172.48.0.10"` within 60 s;
 - `traffic.py send snort --only ssh_burst` gives `sid == 1000004`;
-- appending the auth fixture (10 failures) to `/lab/ossec-input/secure` gives a `security-ossec-*` doc with `rule_id == 100020` from `10.42.0.20`.
+- appending the auth fixture (10 failures) to `/lab/ossec-input/secure` gives a `security-ossec-*` doc with `rule_id == 100020` from `172.48.0.20`.
 
 **Acceptance:** `make test-e2e && make test`
 
@@ -607,7 +608,7 @@ sensors within a window, and emit table, JSON or Ansible vars.
 - the second run has `changed=0`;
 - `block_state=absent` removes it;
 - `block_ips: ["not-an-ip"]` fails at the assert;
-- end to end: after the T14 traffic and auth injection, `correlate.py --since 15m --format ansible` includes `10.42.0.20`, and feeding that file to the playbook blocks it on `target`.
+- end to end: after the T14 traffic and auth injection, `correlate.py --since 15m --format ansible` includes `172.48.0.20`, and feeding that file to the playbook blocks it on `target`.
 
 **Acceptance:** `make test-e2e && make test`
 

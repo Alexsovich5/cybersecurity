@@ -89,7 +89,7 @@
         name: "{{ item }}"
         enabled: yes
         state: started
-      loop:
+      with_items:
         - elasticsearch
         - logstash
         - kibana
