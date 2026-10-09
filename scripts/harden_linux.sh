@@ -1,61 +1,363 @@
 #!/bin/bash
 # Linux Security Hardening Script
 #
-# CIS Benchmark-based hardening for CentOS/RHEL 7 servers
+# CIS Benchmark-based hardening for CentOS/RHEL 7 servers.
+#
+# Usage: harden_linux.sh [--check] [--root DIR] [--skip-services]
+#                        [--skip-packages] [--only STEP[,STEP..]]
+#   STEP is one of: ssh,password,firewall,services,permissions,audit,sysctl,fail2ban
+#
+# Environment equivalents: HARDEN_ROOT, HARDEN_SKIP_SERVICES=1,
+# HARDEN_SKIP_PACKAGES=1.
+#
+# Every setting is applied only when it differs from the wanted value, so
+# repeated runs change nothing. Each modification prints "CHANGED: ...".
+# With --check nothing is modified; each difference prints
+# "NONCOMPLIANT: ..." and the script exits 2 if any were found.
+#
+# Exit codes: 0 compliant/applied, 1 usage error or not root,
+#             2 non-compliant items found (--check only).
 
-set -e
+set -euo pipefail
 
-echo "=== Linux Hardening Script ==="
-echo "Date: $(date)"
-echo "Host: $(hostname)"
+STEPS="ssh password firewall services permissions audit sysctl fail2ban"
+DISABLE_SERVICES="avahi-daemon cups bluetooth postfix rpcbind"
 
-# Ensure running as root
+CHECK=0
+ROOT="${HARDEN_ROOT:-/}"
+SKIP_SERVICES="${HARDEN_SKIP_SERVICES:-0}"
+SKIP_PACKAGES="${HARDEN_SKIP_PACKAGES:-0}"
+ONLY=""
+NONCOMPLIANT=0
+
+usage() {
+    echo "usage: $0 [--check] [--root DIR] [--skip-services] [--skip-packages] [--only STEP[,STEP..]]" >&2
+    echo "  STEP: ${STEPS// /,}" >&2
+    exit 1
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --check) CHECK=1 ;;
+        --root)
+            [ $# -ge 2 ] || usage
+            ROOT="$2"
+            shift
+            ;;
+        --root=*) ROOT="${1#--root=}" ;;
+        --skip-services) SKIP_SERVICES=1 ;;
+        --skip-packages) SKIP_PACKAGES=1 ;;
+        --only)
+            [ $# -ge 2 ] || usage
+            ONLY="$2"
+            shift
+            ;;
+        --only=*) ONLY="${1#--only=}" ;;
+        -h|--help) usage ;;
+        *)
+            echo "unknown option: $1" >&2
+            usage
+            ;;
+    esac
+    shift
+done
+
+if [ -n "$ONLY" ]; then
+    for step in ${ONLY//,/ }; do
+        case " $STEPS " in
+            *" $step "*) ;;
+            *)
+                echo "unknown step: $step" >&2
+                usage
+                ;;
+        esac
+    done
+fi
+
 if [ "$(id -u)" != "0" ]; then
-    echo "Must run as root"
+    echo "Must run as root" >&2
     exit 1
 fi
 
-echo "[1/8] Configuring SSH hardening..."
-cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-sed -i 's/#MaxAuthTries 6/MaxAuthTries 3/' /etc/ssh/sshd_config
-sed -i 's/#ClientAliveInterval 0/ClientAliveInterval 300/' /etc/ssh/sshd_config
-sed -i 's/#ClientAliveCountMax 3/ClientAliveCountMax 2/' /etc/ssh/sshd_config
-echo "Protocol 2" >> /etc/ssh/sshd_config
-systemctl restart sshd
+if [ ! -d "$ROOT" ]; then
+    echo "root directory does not exist: $ROOT" >&2
+    exit 1
+fi
+ROOT="$(cd "$ROOT" && pwd)"
+# Path prefix for files under the root; empty when the root is "/".
+if [ "$ROOT" = "/" ]; then
+    R=""
+else
+    R="$ROOT"
+fi
 
-echo "[2/8] Setting password policies..."
-sed -i 's/PASS_MAX_DAYS.*/PASS_MAX_DAYS   90/' /etc/login.defs
-sed -i 's/PASS_MIN_DAYS.*/PASS_MIN_DAYS   7/' /etc/login.defs
-sed -i 's/PASS_MIN_LEN.*/PASS_MIN_LEN    12/' /etc/login.defs
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-echo "[3/8] Configuring firewall rules..."
-systemctl enable firewalld
-systemctl start firewalld
-firewall-cmd --set-default-zone=drop
-firewall-cmd --zone=drop --add-service=ssh --permanent
-firewall-cmd --zone=drop --add-service=https --permanent
-firewall-cmd --reload
+# --- helpers ---------------------------------------------------------------
 
-echo "[4/8] Disabling unnecessary services..."
-DISABLE_SERVICES="avahi-daemon cups bluetooth postfix rpcbind"
-for svc in $DISABLE_SERVICES; do
-    systemctl disable "$svc" 2>/dev/null || true
-    systemctl stop "$svc" 2>/dev/null || true
-done
+# changed MSG: report a modification.
+changed() {
+    echo "CHANGED: $1"
+}
 
-echo "[5/8] Setting file permissions..."
-chmod 600 /etc/crontab
-chmod 600 /etc/cron.d/*
-chmod 700 /root
-chmod 644 /etc/passwd
-chmod 000 /etc/shadow
-chown root:root /etc/shadow
+# noncompliant MSG: report a difference found in --check mode.
+noncompliant() {
+    echo "NONCOMPLIANT: $1"
+    NONCOMPLIANT=1
+}
 
-echo "[6/8] Configuring audit logging..."
-yum install -y audit
-cat > /etc/audit/rules.d/hardening.rules << 'AUDIT_RULES'
+# selected STEP: true when STEP runs in this invocation.
+selected() {
+    [ -z "$ONLY" ] && return 0
+    case ",$ONLY," in
+        *",$1,"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# live: true when services on the running system may be touched.
+live() {
+    [ -z "$R" ] && [ "$SKIP_SERVICES" != "1" ] && [ "$CHECK" != "1" ]
+}
+
+# install_packages PKG..: install packages unless --skip-packages/--check.
+install_packages() {
+    if [ "$SKIP_PACKAGES" = "1" ] || [ "$CHECK" = "1" ]; then
+        return 0
+    fi
+    local missing=()
+    local pkg
+    for pkg in "$@"; do
+        rpm --root "$ROOT" -q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        yum install -y --installroot="$ROOT" "${missing[@]}"
+        changed "packages: installed ${missing[*]}"
+    fi
+}
+
+# write_if_changed FILE: replace FILE with stdin when the content differs.
+write_if_changed() {
+    local file="$1"
+    local new="$TMP/new"
+    cat > "$new"
+    if [ -f "$file" ] && cmp -s "$new" "$file"; then
+        return 0
+    fi
+    if [ "$CHECK" = "1" ]; then
+        noncompliant "${file#"$R"}: content differs"
+        return 0
+    fi
+    mkdir -p "$(dirname "$file")"
+    if [ -f "$file" ]; then
+        cat "$new" > "$file"
+    else
+        cp "$new" "$file"
+    fi
+    changed "${file#"$R"}: content updated"
+}
+
+# set_kv FILE KEY VALUE SEP: make "KEY<SEP>VALUE" the only active setting of
+# KEY. The first line holding KEY, commented ("#KEY ...") or not, is replaced;
+# later uncommented lines for KEY are removed; if KEY is absent the line is
+# appended.
+set_kv() {
+    local file="$1" key="$2" value="$3" sep="$4"
+    local line="${key}${sep}${value}"
+    local new="$TMP/kv"
+    if [ ! -f "$file" ]; then
+        if [ "$CHECK" = "1" ]; then
+            noncompliant "${file#"$R"}: missing ($line)"
+            return 0
+        fi
+        mkdir -p "$(dirname "$file")"
+        : > "$file"
+    fi
+    awk -v key="$key" -v line="$line" '
+        function is_key(s, active) {
+            if (!active) sub(/^#/, "", s)
+            if (index(s, key) != 1) return 0
+            rest = substr(s, length(key) + 1)
+            return rest == "" || rest ~ /^[ \t=]/
+        }
+        {
+            if (!done && is_key($0, 0)) { print line; done = 1; next }
+            if (done && is_key($0, 1)) next
+            print
+        }
+        END { if (!done) print line }
+    ' "$file" > "$new"
+    if cmp -s "$new" "$file"; then
+        return 0
+    fi
+    if [ "$CHECK" = "1" ]; then
+        noncompliant "${file#"$R"}: $line"
+        return 0
+    fi
+    cat "$new" > "$file"
+    changed "${file#"$R"}: $line"
+}
+
+# ensure_mode PATH MODE [OWNER]: set octal MODE and optional OWNER
+# (user:group) on PATH when they differ. A missing PATH is skipped.
+ensure_mode() {
+    local path="$1" mode="$2" owner="${3:-}"
+    [ -e "$path" ] || return 0
+    local cur
+    cur="$(stat -c '%a' "$path")"
+    if [ $((8#$cur)) -ne $((8#$mode)) ]; then
+        if [ "$CHECK" = "1" ]; then
+            noncompliant "${path#"$R"}: mode $cur, want $mode"
+        else
+            chmod "$mode" "$path"
+            changed "${path#"$R"}: mode $cur -> $mode"
+        fi
+    fi
+    if [ -n "$owner" ]; then
+        cur="$(stat -c '%U:%G' "$path")"
+        if [ "$cur" != "$owner" ]; then
+            if [ "$CHECK" = "1" ]; then
+                noncompliant "${path#"$R"}: owner $cur, want $owner"
+            else
+                chown "$owner" "$path"
+                changed "${path#"$R"}: owner $cur -> $owner"
+            fi
+        fi
+    fi
+}
+
+# --- steps -----------------------------------------------------------------
+
+step_ssh() {
+    local cfg="$R/etc/ssh/sshd_config"
+    local before=""
+    [ -f "$cfg" ] && before="$(cksum < "$cfg")"
+    mkdir_root etc/ssh
+    set_kv "$cfg" PermitRootLogin no " "
+    set_kv "$cfg" PasswordAuthentication no " "
+    set_kv "$cfg" MaxAuthTries 3 " "
+    set_kv "$cfg" ClientAliveInterval 300 " "
+    set_kv "$cfg" ClientAliveCountMax 2 " "
+    if live && [ "$before" != "$(cksum < "$cfg")" ]; then
+        systemctl restart sshd
+    fi
+}
+
+step_password() {
+    local defs="$R/etc/login.defs"
+    mkdir_root etc
+    set_kv "$defs" PASS_MAX_DAYS 90 "   "
+    set_kv "$defs" PASS_MIN_DAYS 7 "   "
+    set_kv "$defs" PASS_MIN_LEN 12 "    "
+}
+
+drop_zone_xml() {
+    cat << 'ZONE'
+<?xml version="1.0" encoding="utf-8"?>
+<zone target="DROP">
+  <short>Drop</short>
+  <description>Unsolicited incoming network packets are dropped. Incoming packets that are related to outgoing network connections are accepted. Outgoing network connections are allowed.</description>
+  <service name="ssh"/>
+  <service name="https"/>
+</zone>
+ZONE
+}
+
+# firewall_with online|offline: apply the zone settings through the running
+# daemon (firewall-cmd, services added permanently) or firewall-offline-cmd.
+firewall_with() {
+    local zone_cmd svc_cmd zone svc
+    if [ "$1" = "online" ]; then
+        zone_cmd=(firewall-cmd)
+        svc_cmd=(firewall-cmd --permanent)
+    else
+        zone_cmd=(firewall-offline-cmd)
+        svc_cmd=(firewall-offline-cmd)
+    fi
+    zone="$("${zone_cmd[@]}" --get-default-zone 2>/dev/null || true)"
+    if [ "$zone" != "drop" ]; then
+        if [ "$CHECK" = "1" ]; then
+            noncompliant "firewalld: default zone $zone, want drop"
+        else
+            "${zone_cmd[@]}" --set-default-zone=drop >/dev/null
+            changed "firewalld: default zone drop"
+        fi
+    fi
+    for svc in ssh https; do
+        if ! "${svc_cmd[@]}" --zone=drop --query-service="$svc" >/dev/null 2>&1; then
+            if [ "$CHECK" = "1" ]; then
+                noncompliant "firewalld: service $svc not in zone drop"
+            else
+                "${svc_cmd[@]}" --zone=drop --add-service="$svc" >/dev/null
+                changed "firewalld: service $svc added to zone drop"
+            fi
+        fi
+    done
+}
+
+step_firewall() {
+    install_packages firewalld
+    mkdir_root etc/firewalld/zones
+    if [ -n "$R" ]; then
+        # firewall-offline-cmd cannot target another root, so write the
+        # permanent configuration files directly.
+        set_kv "$R/etc/firewalld/firewalld.conf" DefaultZone drop "="
+        drop_zone_xml | write_if_changed "$R/etc/firewalld/zones/drop.xml"
+        return 0
+    fi
+    if [ "$SKIP_SERVICES" != "1" ] && firewall-cmd --state >/dev/null 2>&1; then
+        firewall_with online
+        if [ "$CHECK" != "1" ]; then
+            firewall-cmd --reload >/dev/null
+        fi
+    else
+        firewall_with offline
+    fi
+    if live; then
+        systemctl enable firewalld
+    fi
+}
+
+step_services() {
+    if [ "$SKIP_SERVICES" = "1" ] || [ -n "$R" ]; then
+        echo "skipped"
+        return 0
+    fi
+    local svc
+    for svc in $DISABLE_SERVICES; do
+        if systemctl is-enabled "$svc" >/dev/null 2>&1 || systemctl is-active "$svc" >/dev/null 2>&1; then
+            if [ "$CHECK" = "1" ]; then
+                noncompliant "service $svc is enabled or running"
+            else
+                systemctl disable "$svc" >/dev/null 2>&1 || true
+                systemctl stop "$svc" >/dev/null 2>&1 || true
+                changed "service $svc disabled"
+            fi
+        fi
+    done
+}
+
+step_permissions() {
+    mkdir_root etc/cron.d
+    local f
+    ensure_mode "$R/etc/crontab" 600
+    for f in "$R"/etc/cron.d/*; do
+        [ -e "$f" ] || continue
+        ensure_mode "$f" 600
+    done
+    ensure_mode "$R/root" 700
+    ensure_mode "$R/etc/passwd" 644
+    ensure_mode "$R/etc/shadow" 000 root:root
+}
+
+step_audit() {
+    install_packages audit
+    mkdir_root etc/audit/rules.d
+    local rules="$R/etc/audit/rules.d/hardening.rules"
+    local before=""
+    [ -f "$rules" ] && before="$(cksum < "$rules")"
+    write_if_changed "$rules" << 'AUDIT_RULES'
 -w /etc/passwd -p wa -k identity
 -w /etc/shadow -p wa -k identity
 -w /etc/group -p wa -k identity
@@ -63,11 +365,17 @@ cat > /etc/audit/rules.d/hardening.rules << 'AUDIT_RULES'
 -w /var/log/lastlog -p wa -k logins
 -a always,exit -F arch=b64 -S execve -k commands
 AUDIT_RULES
-systemctl enable auditd
-systemctl restart auditd
+    if live; then
+        systemctl enable auditd
+        if [ "$before" != "$(cksum < "$rules")" ]; then
+            service auditd restart
+        fi
+    fi
+}
 
-echo "[7/8] Kernel hardening (sysctl)..."
-cat >> /etc/sysctl.conf << 'SYSCTL'
+step_sysctl() {
+    mkdir_root etc/sysctl.d
+    write_if_changed "$R/etc/sysctl.d/99-hardening.conf" << 'SYSCTL'
 net.ipv4.ip_forward = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
@@ -76,11 +384,15 @@ net.ipv4.conf.all.log_martians = 1
 net.ipv4.tcp_syncookies = 1
 kernel.randomize_va_space = 2
 SYSCTL
-sysctl -p
+    if live; then
+        sysctl --system >/dev/null
+    fi
+}
 
-echo "[8/8] Installing and configuring fail2ban..."
-yum install -y fail2ban
-cat > /etc/fail2ban/jail.local << 'F2B'
+step_fail2ban() {
+    install_packages fail2ban
+    mkdir_root etc/fail2ban
+    write_if_changed "$R/etc/fail2ban/jail.local" << 'F2B'
 [DEFAULT]
 bantime = 3600
 findtime = 600
@@ -92,7 +404,33 @@ port = ssh
 filter = sshd
 logpath = /var/log/secure
 F2B
-systemctl enable fail2ban
-systemctl start fail2ban
+    if live; then
+        systemctl enable fail2ban
+        systemctl restart fail2ban
+    fi
+}
 
+# mkdir_root DIR: create DIR under the root (not in --check mode).
+mkdir_root() {
+    [ "$CHECK" = "1" ] && return 0
+    mkdir -p "$ROOT/$1"
+}
+
+# --- main ------------------------------------------------------------------
+
+echo "=== Linux Hardening Script ==="
+echo "Host: $(hostname)  Root: $ROOT  Mode: $([ "$CHECK" = "1" ] && echo check || echo apply)"
+
+n=0
+for step in $STEPS; do
+    n=$((n + 1))
+    selected "$step" || continue
+    echo "[$n/8] $step"
+    "step_$step"
+done
+
+if [ "$CHECK" = "1" ] && [ "$NONCOMPLIANT" = "1" ]; then
+    echo "=== Non-compliant items found ==="
+    exit 2
+fi
 echo "=== Hardening complete ==="

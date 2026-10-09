@@ -1,13 +1,13 @@
 COMPOSE ?= docker compose
 RUN_TESTS = $(COMPOSE) run --rm tests
 
-.PHONY: build test test-static test-unit test-base shell clean
+.PHONY: build test test-static test-unit test-base test-harden shell clean
 
 build:
 	$(COMPOSE) build base
 	$(COMPOSE) build
 
-test: test-static test-unit test-base
+test: test-static test-unit test-base test-harden
 
 test-static:
 	$(RUN_TESTS) sh -c '\
@@ -22,6 +22,9 @@ test-unit:
 
 test-base:
 	$(COMPOSE) run --rm --no-deps base bats tests/bats/base.bats
+
+test-harden:
+	$(COMPOSE) run --rm --no-deps base bats tests/bats/harden_linux.bats
 
 shell:
 	$(RUN_TESTS) bash
