@@ -1,0 +1,5 @@
+---
+# Empty on purpose: every rule applies to every playbook. The only
+# deliberate exception, the optional "yum name='*' state=latest" task in
+# ansible/hardening.yml, carries the skip_ansible_lint tag in place.
+skip_list: []

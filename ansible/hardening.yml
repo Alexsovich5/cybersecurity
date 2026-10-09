@@ -1,95 +1,75 @@
 ---
-# Cybersecurity Hardening Playbook
-# Deploys security stack across infrastructure
+# Site playbook for the security lab. Plays are selected by tag:
+# hardening, ossec, snort, filebeat, elk.
 
-- name: Deploy Security Hardening
+- name: Harden CentOS 7 hosts
   hosts: all
   become: yes
-
-  vars:
-    snort_version: "2.9.12"
-    ossec_version: "2.9.4"
+  tags: [hardening]
 
   tasks:
+    # Off by default (hardening_update_all_packages: false): a full update
+    # is not reproducible, so it cannot pin versions like the task below.
+    # "state: latest" is intentional here, hence the skip_ansible_lint tag.
     - name: Update all packages
       yum:
         name: '*'
         state: latest
+      when: hardening_update_all_packages | bool
+      tags: [skip_ansible_lint]
 
-    - name: Install security tools
+    - name: Install baseline security packages at pinned builds
       yum:
-        name:
-          - aide
-          - rkhunter
-          - clamav
-          - fail2ban
-          - audit
+        name: "{{ hardening_packages }}"
         state: present
+      register: hardening_yum
+      until: hardening_yum is succeeded
+      retries: 3
+      delay: 5
 
     - name: Run Linux hardening script
-      script: ../scripts/harden_linux.sh
+      script: >-
+        {{ playbook_dir }}/../scripts/harden_linux.sh
+        {{ '--skip-services' if not hardening_manage_services | bool else '' }}
+      register: result
+      changed_when: "'CHANGED:' in result.stdout"
 
-    - name: Deploy OSSEC agent
-      script: ../scripts/deploy_ossec.sh
+- name: Deploy OSSEC HIDS in local mode
+  hosts: all
+  gather_facts: no
+  tags: [ossec]
 
-- name: Deploy Snort IDS on Network Sensors
+  tasks:
+    - name: Placeholder until the OSSEC play is implemented
+      debug:
+        msg: "OSSEC deployment is added in T9"
+
+- name: Deploy Snort IDS on network sensors
   hosts: ids_sensors
-  become: yes
+  gather_facts: no
+  tags: [snort]
 
   tasks:
-    - name: Install Snort dependencies
-      yum:
-        name:
-          - libpcap-devel
-          - pcre-devel
-          - libdnet-devel
-          - daq
-        state: present
+    - name: Placeholder until the Snort play is implemented
+      debug:
+        msg: "Snort sensor deployment is added in T7"
 
-    - name: Deploy Snort configuration
-      copy:
-        src: ../config/snort.conf
-        dest: /etc/snort/snort.conf
-        owner: root
-        mode: '0644'
+- name: Ship security logs with Filebeat
+  hosts: all
+  gather_facts: no
+  tags: [filebeat]
 
-    - name: Enable Snort service
-      systemd:
-        name: snort
-        enabled: yes
-        state: started
+  tasks:
+    - name: Placeholder until the Filebeat play is implemented
+      debug:
+        msg: "Filebeat deployment is added in T13"
 
-- name: Deploy ELK Stack
+- name: Deploy ELK server
   hosts: elk_server
-  become: yes
+  gather_facts: no
+  tags: [elk]
 
   tasks:
-    - name: Install Elasticsearch
-      yum:
-        name: elasticsearch-6.5.0
-        state: present
-
-    - name: Install Logstash
-      yum:
-        name: logstash-6.5.0
-        state: present
-
-    - name: Deploy Logstash pipeline
-      copy:
-        src: ../elk/logstash.conf
-        dest: /etc/logstash/conf.d/security.conf
-
-    - name: Install Kibana
-      yum:
-        name: kibana-6.5.0
-        state: present
-
-    - name: Start ELK services
-      systemd:
-        name: "{{ item }}"
-        enabled: yes
-        state: started
-      with_items:
-        - elasticsearch
-        - logstash
-        - kibana
+    - name: Placeholder until the ELK play is implemented
+      debug:
+        msg: "ELK server example play is added in T13"

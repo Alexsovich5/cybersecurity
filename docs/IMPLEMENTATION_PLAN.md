@@ -155,7 +155,7 @@ option once, add --check/--root/skip flags, and cover it with bats.
 **Goal:** The `hardening` play of `ansible/hardening.yml` hardens the `target` container idempotently, and testinfra verifies the result (F2). The playbook gets its final five-play structure.
 
 **Files**
-- create `docker/target/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `yum install -y openssh-server-7.4p1-16.el7 openssh-clients-7.4p1-16.el7 python-2.7.5-68.el7`; add user `ansible` with NOPASSWD sudo; `COPY docker/target/entrypoint.sh /usr/local/bin/`.
+- create `docker/target/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `yum install -y openssh-server-7.4p1-16.el7 openssh-clients-7.4p1-16.el7 python-2.7.5-68.el7`; `yum downgrade -y libcom_err-1.42.9-11.el7` (the `centos:7.5.1804` rootfs carries `libcom_err-1.42.9-12.el7_5` from `updates`, and the GA `e2fsprogs` that aide and rkhunter pull in requires exactly `-11.el7`); add user `ansible` with NOPASSWD sudo; `COPY docker/target/entrypoint.sh /usr/local/bin/`.
 - create `docker/target/entrypoint.sh`:
   - generate `/lab/keys/id_rsa` if missing (mode 600), install the public key for `ansible`;
   - `ssh-keygen -A`;
@@ -164,19 +164,19 @@ option once, add --check/--root/skip flags, and cover it with bats.
 - rewrite `ansible/hardening.yml` into the five tagged plays of §5.9, in order:
   - `hardening` (hosts `all`):
     - `yum: name='*' state=latest` only `when: hardening_update_all_packages`, tagged `skip_ansible_lint` with a comment explaining why;
-    - `yum: name={{ hardening_packages }} state=present`;
+    - `yum: name={{ hardening_packages }} state=present` (retried 3 times with `until`, because the vault mirror is flaky);
     - `script: "{{ playbook_dir }}/../scripts/harden_linux.sh {{ '--skip-services' if not hardening_manage_services else '' }}"` with `register` and `changed_when: "'CHANGED:' in result.stdout"`.
   - `ossec`, `snort`, `filebeat`, `elk`: each a placeholder play with one `debug` task naming the task that fills it (T9, T7, T13, T13). The legacy Snort tasks (yum `daq`, which no repo has, and an unconditional `systemd` start) and the legacy ELK tasks (6.5.0 pins) are removed here, so a full-playbook run and ansible-lint stay green. The broken `deploy_ossec.sh` task is removed and comes back in T9.
 - create `.ansible-lint`: `skip_list: []` (documented as empty on purpose; the one exception is tagged in place).
-- create `tests/integration/conftest.py`: `wait_for_ssh`, `run_playbook(tags) -> recap dict` parsed from `PLAY RECAP`.
+- create `tests/integration/conftest.py`: `wait_for_ssh`, `run_playbook(tags) -> recap dict` parsed from `PLAY RECAP`, and a `pytest_configure` hook that defaults `--ansible-inventory` to `ansible/inventory/docker.ini` (testinfra 1.14's Ansible backend does not read the inventory from `ansible.cfg`).
 - create `tests/integration/test_hardening.py`.
 - modify `docker-compose.yml`: service `target` (`build: {context: ., dockerfile: docker/target/Dockerfile}`, `platform: linux/amd64`, volume `lab-keys:/lab/keys`); `tests` mounts `lab-keys:/lab/keys:ro`.
 - modify `Makefile`:
-  - `test-ansible` runs `$(COMPOSE) up -d target`, then `$(COMPOSE) run --rm tests pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py`;
+  - `test-ansible` runs `$(COMPOSE) up -d --force-recreate target` (so the first play run always meets a fresh target), then `$(COMPOSE) run --rm tests pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py`;
   - add `ansible-lint ansible/hardening.yml` to `test-static`.
 
 **Tests to write first:** `test_hardening.py` (testinfra runs commands with `--sudo`, because `sshd -T` and `/etc/shadow` need root):
-- the first run finishes with `failed=0`, the second with `changed=0`;
+- the first run finishes with `failed=0` and `changed>0` (fresh target), the second with `changed=0`;
 - `host.run("sshd -T")` has `permitrootlogin no`, `passwordauthentication no` and `maxauthtries 3`;
 - for each NVR in `hardening_packages`, `rpm -q <nvr>` succeeds;
 - `/etc/sysctl.d/99-hardening.conf` contains `net.ipv4.tcp_syncookies = 1`;

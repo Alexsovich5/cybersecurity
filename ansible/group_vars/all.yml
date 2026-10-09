@@ -1,0 +1,18 @@
+---
+snort_version: "2.9.11.1"
+daq_version: "2.0.6"
+ossec_version: "2.9.4"
+elastic_version: "6.3.2"
+
+# Full-system "yum update" is not deterministic; it stays off unless asked for.
+hardening_update_all_packages: false
+
+# Exact builds (name-version-release) of the baseline security packages.
+hardening_packages:
+  - aide-0.15.1-13.el7
+  - rkhunter-1.4.6-1.el7
+  - clamav-0.99.2-1.el7
+  - clamav-data-empty-0.99.2-1.el7
+  - fail2ban-0.9.7-1.el7
+  - audit-2.8.1-3.el7
+  - firewalld-0.4.4.4-14.el7
