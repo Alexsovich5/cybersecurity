@@ -10,6 +10,8 @@ networks:
 
 volumes:
   lab-keys:
+  pcaps:
+  snort-logs:
 
 services:
   tests:
@@ -20,6 +22,7 @@ services:
     volumes:
       - .:/src
       - lab-keys:/lab/keys:ro
+      - pcaps:/lab/pcaps
     networks:
       - lab
 
@@ -43,5 +46,21 @@ services:
     hostname: target
     volumes:
       - lab-keys:/lab/keys
+    networks:
+      - lab
+
+  snort:
+    build:
+      context: .
+      dockerfile: docker/snort/Dockerfile
+    image: cybersecurity:snort
+    platform: linux/amd64
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - snort-logs:/var/log/snort
+      - pcaps:/lab/pcaps:ro
+      - ./tests:/src/tests:ro
     networks:
       - lab

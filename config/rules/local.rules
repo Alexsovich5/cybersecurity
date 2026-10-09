@@ -1,0 +1,6 @@
+# Local lab rules. SIDs 1000000-1999999 are reserved for local use.
+
+alert icmp any any -> $HOME_NET any (msg:"LAB ICMP probe"; itype:8; content:"LAB-PROBE"; classtype:misc-activity; sid:1000001; rev:1;)
+alert tcp any any -> $HOME_NET 23 (msg:"LAB telnet connection attempt"; flags:S; classtype:attempted-admin; sid:1000002; rev:1;)
+alert tcp any any -> $HOME_NET any (msg:"LAB nmap XMAS scan"; flags:FPU; classtype:attempted-recon; sid:1000003; rev:1;)
+alert tcp any any -> $HOME_NET 22 (msg:"LAB SSH SYN burst"; flags:S; detection_filter:track by_src, count 5, seconds 60; classtype:attempted-admin; sid:1000004; rev:1;)

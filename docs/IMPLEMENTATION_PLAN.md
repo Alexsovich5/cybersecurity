@@ -231,20 +231,20 @@ benign packets, with unit tests on the generated pcaps.
   - options `--prefix`, `--src-dir`, `--config-dir DIR` (defaults to the repo's `config`), `--no-deps`;
   - yum build deps by exact NVR (§6): `gcc-4.8.5-28.el7 gcc-c++-4.8.5-28.el7 make-3.82-23.el7 flex-2.5.37-3.el7 bison-3.0.4-1.el7 libpcap-devel-1.5.3-11.el7 pcre-devel-8.32-17.el7 libdnet-devel-1.12-0.13.1.el7 zlib-devel-1.2.7-17.el7 openssl-devel-1.0.2k-12.el7`;
   - download DAQ 2.0.6 and Snort 2.9.11.1 from the FreeBSD distcache and check the sha256 values in §6;
-  - `./configure --disable-open-appid --enable-sourcefire`, `make install`, `ldconfig`;
+  - `./configure --disable-open-appid --enable-sourcefire`, `make install`, `ldconfig` (with `$PREFIX/lib` added to `/etc/ld.so.conf.d/snort.conf`; DAQ is built with `make -j1` because its libsfbpf makefile races on the generated `tokdefs.h`);
   - create the `snort` user and group and `/etc/snort/{rules,so_rules,preproc_rules}`, `/var/log/snort`, `/usr/local/lib/snort_dynamicrules`;
   - copy `etc/*.config` and `*.map` from the source tree;
   - install `config/snort.conf` and `config/rules/local.rules`, and touch empty `white_list.rules` / `black_list.rules`;
   - on success, write the marker `/etc/snort/.installed-2.9.11.1`; skip the build if the marker exists and `snort -V` reports 2.9.11.1.
 - modify `config/snort.conf`:
-  - `ipvar` for IP variables;
+  - `ipvar` for IP variables; `HOME_NET` becomes `[10.0.0.0/8,172.48.0.0/24]` so the lab network (and the pcaps' destination `172.48.0.10`) is inside it;
   - `dynamicpreprocessor directory`, `dynamicengine`, `dynamicdetection directory`;
   - `preprocessor frag3_global/frag3_engine`, `stream5_global/tcp/udp/icmp`;
   - `include classification.config` and `reference.config`;
   - keep the existing vars, pcre limits, `ac-bnfa` and fast output;
   - `# include $RULE_PATH/community.rules` becomes an optional comment.
 - create `config/rules/local.rules`: SIDs 1000001–1000004 (§5.2).
-- create `docker/snort/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `COPY scripts/setup_snort.sh /opt/cybersec/scripts/`; `COPY config/ /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/setup_snort.sh --config-dir /opt/cybersec/config`; default `CMD ["snort","-i","eth0","-c","/etc/snort/snort.conf","-l","/var/log/snort","-A","fast","-k","none","-q"]`.
+- create `docker/snort/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; first `yum downgrade` the rootfs's updates-repo `krb5-libs`, `libcom_err`, `libstdc++` and `libgcc` to their 7.5 GA builds (`krb5-libs-1.15.1-18.el7 libcom_err-1.42.9-11.el7 libstdc++-4.8.5-28.el7 libgcc-4.8.5-28.el7`), because the GA `krb5-devel`, `libcom_err-devel` and `libstdc++-devel` pulled in by the build deps require exactly those (same cause as the `target` image's `libcom_err` downgrade, §7); `COPY scripts/setup_snort.sh /opt/cybersec/scripts/`; `COPY config/ /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/setup_snort.sh --config-dir /opt/cybersec/config`; default `CMD ["snort","-i","eth0","-c","/etc/snort/snort.conf","-l","/var/log/snort","-A","fast","-k","none","-q"]`.
 - create `tests/bats/snort.bats`.
 - modify `docker-compose.yml`: service `snort` (`build: {context: ., dockerfile: docker/snort/Dockerfile}`, `platform: linux/amd64`, `cap_add: [NET_ADMIN, NET_RAW]`, volumes `snort-logs:/var/log/snort`, `pcaps:/lab/pcaps:ro`, `./tests:/src/tests:ro`); `tests` mounts `pcaps:/lab/pcaps`.
 - modify `Makefile`: `test-snort` runs `$(COMPOSE) run --rm --no-deps tests python tools/traffic.py write /lab/pcaps`, then `$(COMPOSE) run --rm --no-deps snort bats /src/tests/bats/snort.bats`.
