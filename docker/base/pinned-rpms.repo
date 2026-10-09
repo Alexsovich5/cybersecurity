@@ -1,0 +1,5 @@
+[pinned-rpms]
+name=Pinned EPEL and koji RPMs (sha256-checked local copies)
+baseurl=file:///opt/pinned-rpms
+gpgcheck=0
+enabled=1

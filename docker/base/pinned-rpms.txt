@@ -1,0 +1,11 @@
+c3b765326dc27885003e7ba154ee32e6cf57827ca7e1033712b4c2f7418a395e  https://archives.fedoraproject.org/pub/archive/epel/7.2019-05-29/x86_64/Packages/f/fail2ban-0.9.7-1.el7.noarch.rpm
+ff460f1595c970b55f4249cc0ca22be14604b968eaa1e5d790f364fd9b820674  https://archives.fedoraproject.org/pub/archive/epel/7.2019-05-29/x86_64/Packages/f/fail2ban-server-0.9.7-1.el7.noarch.rpm
+65f18bca7604130de5928cbea5e7653b353c6c67a066471d2a056ceb1b3475b1  https://archives.fedoraproject.org/pub/archive/epel/7.2019-05-29/x86_64/Packages/f/fail2ban-firewalld-0.9.7-1.el7.noarch.rpm
+a53ef1a15e188e14fe1b24cbb98006011e9a6e8f126df757caac50ea06cb785b  https://archives.fedoraproject.org/pub/archive/epel/7.2019-05-29/x86_64/Packages/f/fail2ban-sendmail-0.9.7-1.el7.noarch.rpm
+745aa41299eaf58a82c18c10319ff25d9c9dc7326890ad19aaa0b9bc54fea307  https://archives.fedoraproject.org/pub/archive/epel/7.2019-05-29/x86_64/Packages/r/rkhunter-1.4.6-1.el7.noarch.rpm
+53d0700e60f1e87a15f0b9279510a0675f86bed78e2bd1e4eab898b224c19b99  https://archives.fedoraproject.org/pub/archive/epel/7.2019-05-29/x86_64/Packages/l/libdnet-1.12-0.13.1.el7.x86_64.rpm
+1217efca7b102fff06edd5315f48f19e9713cfa7123db7085d1ef982e6d36078  https://archives.fedoraproject.org/pub/archive/epel/7.2019-05-29/x86_64/Packages/l/libdnet-devel-1.12-0.13.1.el7.x86_64.rpm
+e4a577dc8c5aab232d616d29db8be60825baf03ef6839d9b3e5513956b03ee96  https://kojipkgs.fedoraproject.org/packages/clamav/0.99.2/1.el7/x86_64/clamav-0.99.2-1.el7.x86_64.rpm
+a758edd4ac73736e40ed57162bca75c6c9be805a59ea1e3296b4bc8c9336df29  https://kojipkgs.fedoraproject.org/packages/clamav/0.99.2/1.el7/x86_64/clamav-lib-0.99.2-1.el7.x86_64.rpm
+4ce9de93716d4d0f756e0187d1056e2263516624a627700f4a735b799eee16ba  https://kojipkgs.fedoraproject.org/packages/clamav/0.99.2/1.el7/noarch/clamav-filesystem-0.99.2-1.el7.noarch.rpm
+0ea1373d14a5cbfa01fe91f01ce03cb09c8bd48a4854d97d9a9d0d99d01647a7  https://kojipkgs.fedoraproject.org/packages/clamav/0.99.2/1.el7/noarch/clamav-data-empty-0.99.2-1.el7.noarch.rpm

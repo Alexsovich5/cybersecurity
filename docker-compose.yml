@@ -18,3 +18,14 @@ services:
       - .:/src
     networks:
       - lab
+
+  base:
+    build:
+      context: .
+      dockerfile: docker/base/Dockerfile
+    image: cybersecurity:base
+    platform: linux/amd64
+    volumes:
+      - .:/src
+    networks:
+      - lab
