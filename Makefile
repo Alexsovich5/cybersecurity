@@ -16,7 +16,8 @@ test-static:
 		shellcheck docker/*/*.sh && \
 		for f in scripts/*.sh; do bash -n "$$f" || exit 1; done && \
 		ansible-playbook -i localhost, --syntax-check ansible/hardening.yml && \
-		ansible-lint ansible/hardening.yml'
+		ansible-lint ansible/hardening.yml && \
+		python -m py_compile tools/*.py'
 
 test-unit:
 	$(RUN_TESTS) pytest tests/unit

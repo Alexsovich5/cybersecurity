@@ -208,7 +208,7 @@ versions idempotently and verify host state with testinfra.
 - create `tests/unit/test_traffic.py`.
 - modify `Makefile`: `test-unit` also covers `test_traffic.py` (it is under `tests/unit`, so only the `py_compile` list in `test-static` changes).
 
-**Tests to write first:** `test_traffic.py` (scapy `rdpcap`, pcaps written to `tmp_path`) checks flags and ports per pcap, 6 SYN packets to port 22 in `ssh_burst`, the `LAB-PROBE` payload with ICMP type 8, FIN+PSH+URG in `xmas_scan`, and that `benign.pcap` has no packet to port 22 or 23.
+**Tests to write first:** `test_traffic.py` (scapy `rdpcap`, pcaps written to pytest's `tmpdir`; pytest 3.5.1 predates `tmp_path`) checks flags and ports per pcap, 6 SYN packets to port 22 in `ssh_burst`, the `LAB-PROBE` payload with ICMP type 8, FIN+PSH+URG in `xmas_scan`, and that `benign.pcap` has no packet to port 22 or 23.
 
 **Acceptance:** `make test-unit && make test`
 
