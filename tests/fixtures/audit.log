@@ -1,0 +1,3 @@
+type=SYSCALL msg=audit(1532095390.218:2041): arch=c000003e syscall=59 success=yes exit=0 a0=1d5f0d0 a1=1d60b10 a2=1d5e010 a3=7ffd2a1c6a20 items=2 ppid=2201 pid=2250 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 comm="passwd" exe="/usr/bin/passwd" key="identity"
+type=USER_LOGIN msg=audit(1532095394.731:2042): pid=2218 uid=0 auid=4294967295 ses=4294967295 msg='op=login acct="root" exe="/usr/sbin/sshd" hostname=? addr=172.48.0.20 terminal=ssh res=failed'
+type=CONFIG_CHANGE msg=audit(1532095401.006:2043): auid=0 ses=3 op=add_rule key="time-change" list=4 res=1

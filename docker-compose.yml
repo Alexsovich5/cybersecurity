@@ -14,6 +14,7 @@ volumes:
   snort-logs:
   ossec-logs:
   ossec-input:
+  lab-logs:
   es-data:
 
 services:
@@ -26,12 +27,15 @@ services:
       - .:/src
       - lab-keys:/lab/keys:ro
       - pcaps:/lab/pcaps
+      - lab-logs:/lab/logs/system
       - snort-logs:/lab/logs/snort
       - ossec-logs:/lab/logs/ossec
     environment:
       ES_URL: http://elasticsearch:9200
       SNORT_ALERT: /lab/logs/snort/alert
       OSSEC_ALERTS: /lab/logs/ossec/alerts.json
+      SECURE_LOG: /lab/logs/system/secure
+      AUDIT_LOG: /lab/logs/system/audit/audit.log
     networks:
       - lab
 
@@ -114,6 +118,7 @@ services:
       ES_HOSTS: elasticsearch:9200
     volumes:
       - ./elk/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - ./elk/es-template.json:/usr/share/logstash/templates/security.json:ro
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -142,9 +147,12 @@ services:
     environment:
       SNORT_ALERT: /lab/logs/snort/alert
       OSSEC_ALERTS: /lab/logs/ossec/alerts.json
+      SECURE_LOG: /lab/logs/system/secure
+      AUDIT_LOG: /lab/logs/system/audit/audit.log
       LOGSTASH_HOST: logstash:5044
     volumes:
       - ./elk/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - lab-logs:/lab/logs/system:ro
       - snort-logs:/lab/logs/snort:ro
       - ossec-logs:/lab/logs/ossec:ro
     depends_on:

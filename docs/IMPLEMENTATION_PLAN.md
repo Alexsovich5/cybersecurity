@@ -433,10 +433,12 @@ nested field names, and normalise the Beats host field to hostname.
   - `secure` log: grok `%{SYSLOGBASE} %{GREEDYDATA:syslog_message}` plus `Failed password ... from %{IP:src_ip}`;
   - `audit` log: `kv` on `type=... msg=audit(...)`;
   - output adds `template => "/usr/share/logstash/templates/security.json" template_name => "security" template_overwrite => true`.
-- modify `docker-compose.yml`: `logstash` mounts the template; `filebeat` mounts `lab-logs:/lab/logs:ro` with `SECURE_LOG`/`AUDIT_LOG` env; `tests` mounts `lab-logs` read-write.
+- modify `docker-compose.yml`: `logstash` mounts the template; `filebeat` mounts `lab-logs:/lab/logs/system:ro` with `SECURE_LOG=/lab/logs/system/secure` and `AUDIT_LOG=/lab/logs/system/audit/audit.log`; `tests` mounts `lab-logs:/lab/logs/system` read-write with the same env. (Not `/lab/logs`: a read-only volume there cannot hold the mount points of the nested `snort-logs`/`ossec-logs` mounts, and runc refuses to start Filebeat.)
 - create `tests/fixtures/audit.log` (3 lines). The secure input reuses `tests/fixtures/secure_auth_failures.log`.
 - modify `tests/integration/test_pipeline.py`.
 - modify `Makefile`: add a JSON-parse check of the template to `test-static`.
+- modify `Makefile`: `test-pipeline` fails when the Logstash log contains `mapper_parsing_exception`.
+- The pipeline fixture waits for the `security` template and deletes any `security-*` index whose `src_ip` is not mapped as `ip` (an index created before the template existed), because a template applies only to indices created after it.
 
 **Tests to write first:** `test_pipeline.py` additions:
 - `security-secure-*` has a `src_ip` extracted from `Failed password`;

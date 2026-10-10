@@ -1,5 +1,6 @@
 ---
-# Ships Snort fast alerts and OSSEC JSON alerts to Logstash.
+# Ships Snort fast alerts, OSSEC JSON alerts, the sshd/PAM secure log and
+# the auditd log to Logstash.
 # Each input tags its events with fields.log_type, which Logstash uses
 # to pick the filter and the security-<log_type>-* index.
 
@@ -20,6 +21,22 @@ filebeat.inputs:
     json.add_error_key: true
     fields:
       log_type: ossec
+    fields_under_root: false
+
+  - type: log
+    paths:
+      - ${SECURE_LOG:/var/log/secure}
+    scan_frequency: 2s
+    fields:
+      log_type: secure
+    fields_under_root: false
+
+  - type: log
+    paths:
+      - ${AUDIT_LOG:/var/log/audit/audit.log}
+    scan_frequency: 2s
+    fields:
+      log_type: audit
     fields_under_root: false
 
 output.logstash:

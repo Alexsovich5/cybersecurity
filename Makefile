@@ -17,7 +17,8 @@ test-static:
 		for f in scripts/*.sh; do bash -n "$$f" || exit 1; done && \
 		ansible-playbook -i localhost, --syntax-check ansible/hardening.yml && \
 		ansible-lint ansible/hardening.yml && \
-		python -m py_compile tools/*.py'
+		python -m py_compile tools/*.py && \
+		python -m json.tool elk/es-template.json > /dev/null'
 
 test-unit:
 	$(RUN_TESTS) pytest tests/unit
@@ -42,11 +43,15 @@ test-ansible:
 FILEBEAT_PERMS_CHECK = if $(COMPOSE) logs filebeat 2>&1 | grep -qi 'permission denied'; then \
 		echo 'filebeat cannot read shipped logs: permission denied' >&2; exit 1; fi
 
+LOGSTASH_REJECT_CHECK = if $(COMPOSE) logs logstash 2>&1 | grep -q 'mapper_parsing_exception'; then \
+		echo 'logstash: Elasticsearch rejected documents (mapper_parsing_exception)' >&2; exit 1; fi
+
 test-pipeline:
 	$(COMPOSE) up -d elasticsearch logstash filebeat
 	sleep 10
 	@$(FILEBEAT_PERMS_CHECK)
 	$(RUN_TESTS) pytest tests/integration/test_pipeline.py || { $(FILEBEAT_PERMS_CHECK); exit 1; }
+	@$(LOGSTASH_REJECT_CHECK)
 
 shell:
 	$(RUN_TESTS) bash

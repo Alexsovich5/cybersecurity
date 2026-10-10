@@ -1,7 +1,7 @@
 """Filebeat -> Logstash -> Elasticsearch: fixture alerts become parsed documents.
 
-The fixture appends every Snort fast-alert line and the OSSEC JSON alert to
-the files Filebeat watches, each tagged with a marker that is unique to this
+The fixture appends every Snort fast-alert line, the OSSEC JSON alert, the
+sshd lines of the secure log and the auditd lines to the files Filebeat watches, each tagged with a marker that is unique to this
 run, then looks the resulting documents up in Elasticsearch by that marker.
 """
 import json
@@ -18,6 +18,9 @@ FIXTURES = os.path.join(REPO, "tests", "fixtures")
 ES_URL = os.environ.get("ES_URL", "http://elasticsearch:9200")
 SNORT_ALERT = os.environ.get("SNORT_ALERT", "/lab/logs/snort/alert")
 OSSEC_ALERTS = os.environ.get("OSSEC_ALERTS", "/lab/logs/ossec/alerts.json")
+SECURE_LOG = os.environ.get("SECURE_LOG", "/lab/logs/system/secure")
+AUDIT_LOG = os.environ.get("AUDIT_LOG", "/lab/logs/system/audit/audit.log")
+TEMPLATE = os.path.join(REPO, "elk", "es-template.json")
 
 HEALTH_TIMEOUT = 120
 DOC_TIMEOUT = 60
@@ -41,15 +44,47 @@ def wait_for_es(timeout=HEALTH_TIMEOUT):
     raise RuntimeError("Elasticsearch not healthy after {}s ({})".format(timeout, last_error))
 
 
+def wait_for_template(name="security", timeout=HEALTH_TIMEOUT):
+    """Wait until Logstash has installed the index template NAME."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if requests.get("{}/_template/{}".format(ES_URL, name), timeout=10).status_code == 200:
+            return
+        time.sleep(2)
+    raise RuntimeError("index template {} not installed after {}s".format(name, timeout))
+
+
+def drop_untyped_indices():
+    """Delete security-* indices created before the template existed.
+
+    A template only applies to indices created after it, so an index left
+    in the lab volume by an earlier pipeline version keeps src_ip as text.
+    The fixture lines are re-injected each run, so nothing is lost.
+    """
+    resp = requests.get(ES_URL + "/security-*/_mapping/field/src_ip", timeout=10)
+    resp.raise_for_status()
+    for name, body in resp.json().items():
+        specs = [spec["mapping"]["src_ip"]["type"]
+                 for mapping in body["mappings"].values()
+                 for spec in mapping.values()]
+        if any(kind != "ip" for kind in specs):
+            requests.delete("{}/{}".format(ES_URL, name), timeout=30).raise_for_status()
+
+
 def search(index, marker):
     """Return the _source of every document in INDEX whose message holds MARKER."""
+    return [hit["_source"] for hit in search_hits(index, marker)]
+
+
+def search_hits(index, marker):
+    """Return every hit in INDEX whose message holds MARKER."""
     resp = requests.post(
         "{}/{}/_search".format(ES_URL, index),
         params={"ignore_unavailable": "true", "allow_no_indices": "true"},
         json={"size": 50, "query": {"match_phrase": {"message": marker}}},
         timeout=10)
     resp.raise_for_status()
-    return [hit["_source"] for hit in resp.json()["hits"]["hits"]]
+    return resp.json()["hits"]["hits"]
 
 
 def wait_for_docs(index, marker, timeout=DOC_TIMEOUT):
@@ -80,6 +115,11 @@ def ossec_alert():
         return json.loads(handle.read().strip())
 
 
+def plain_lines(name):
+    with open(os.path.join(FIXTURES, name)) as handle:
+        return [line.rstrip("\n") for line in handle if line.strip()]
+
+
 def append(path, lines):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a") as handle:
@@ -91,6 +131,8 @@ def append(path, lines):
 def shipped():
     """Inject the fixture lines and return {key: (index, marker, docs)}."""
     wait_for_es()
+    wait_for_template()
+    drop_untyped_indices()
     run = uuid.uuid4().hex[:12]
 
     injected = {}
@@ -109,8 +151,24 @@ def shipped():
     alert["full_log"] = "{} {}".format(alert["full_log"], marker)
     injected["ossec1"] = ("security-ossec-*", marker)
 
+    # Secure and audit lines take the marker as a trailing word: the syslog
+    # and auditd parsers ignore text after the fields they extract.
+    secure_out = []
+    for number, line in enumerate(plain_lines("secure_auth_failures.log"), 1):
+        marker = "m{}x{}".format(run, number)
+        secure_out.append("{} {}".format(line, marker))
+        injected["secure{}".format(number)] = ("security-secure-*", marker)
+
+    audit_out = []
+    for number, line in enumerate(plain_lines("audit.log"), 1):
+        marker = "m{}a{}".format(run, number)
+        audit_out.append("{} {}".format(line, marker))
+        injected["audit{}".format(number)] = ("security-audit-*", marker)
+
     append(SNORT_ALERT, snort_out)
     append(OSSEC_ALERTS, [json.dumps(alert, separators=(",", ":"))])
+    append(SECURE_LOG, secure_out)
+    append(AUDIT_LOG, audit_out)
 
     return {key: (index, marker, wait_for_docs(index, marker))
             for key, (index, marker) in injected.items()}
@@ -171,3 +229,84 @@ def test_public_source_gets_geoip(shipped):
     docs = [doc for doc in docs_of(shipped, "snort") if doc.get("src_ip") == "8.8.8.8"]
     assert len(docs) == 1, docs
     assert docs[0]["geoip"]["country_code2"] == "US"
+
+
+def test_secure_failed_password_gives_src_ip(shipped):
+    docs = docs_of(shipped, "secure")
+    assert len(docs) == len(plain_lines("secure_auth_failures.log")), docs
+    failed = [doc for doc in docs if "Failed password" in doc["message"]]
+    assert len(failed) == 10, failed
+    for doc in failed:
+        assert doc["log_type"] == "secure"
+        assert doc["src_ip"] == "172.48.0.20"
+        assert doc["program"] == "sshd"
+        assert doc["logsource"] == "target"
+    assert {doc["src_port"] for doc in failed} == {40012, 40014, 40022, 40026}
+    other = [doc for doc in docs if "Failed password" not in doc["message"]]
+    assert all("src_ip" not in doc for doc in other), other
+    assert {doc["@timestamp"][5:10] for doc in docs} == {"07-20"}
+
+
+def test_audit_records_are_split_into_fields(shipped):
+    docs = docs_of(shipped, "audit")
+    assert len(docs) == len(plain_lines("audit.log")), docs
+    by_type = {doc["type"]: doc for doc in docs}
+    assert {"SYSCALL", "USER_LOGIN"} <= set(by_type), sorted(by_type)
+    assert all(doc["log_type"] == "audit" for doc in docs)
+    syscall = by_type["SYSCALL"]
+    assert syscall["audit"]["syscall"] == "59"
+    assert syscall["audit"]["exe"] == "/usr/bin/passwd"
+    assert syscall["audit"]["key"] == "identity"
+    login = by_type["USER_LOGIN"]
+    assert login["audit"]["addr"] == "172.48.0.20"
+    assert login["audit"]["res"] == "failed"
+    assert login["@timestamp"].startswith("2018-07-20T14:03:14")
+
+
+def field_types(index, fields):
+    """Return {index_name: {field: type}} from the field mapping API."""
+    resp = requests.get("{}/{}/_mapping/field/{}".format(ES_URL, index, ",".join(fields)),
+                        timeout=10)
+    resp.raise_for_status()
+    out = {}
+    for name, body in resp.json().items():
+        types = {}
+        for mapping in body["mappings"].values():
+            for field, spec in mapping.items():
+                leaf = field.rsplit(".", 1)[-1]
+                types[field] = spec["mapping"][leaf]["type"]
+        out[name] = types
+    return out
+
+
+def test_template_types_the_indexed_fields(shipped):
+    written = set()
+    for key, (index, marker, _) in shipped.items():
+        written.update(hit["_index"] for hit in search_hits(index, marker))
+    assert any(name.startswith("security-secure-") for name in written), written
+    fields = ["src_ip", "hostname", "beat.hostname"]
+    for name, types in field_types(",".join(sorted(written)), fields).items():
+        assert types.get("src_ip", "ip") == "ip", (name, types)
+        assert types["hostname"] == "keyword", (name, types)
+        assert types["beat.hostname"] == "keyword", (name, types)
+    for name in written:
+        if name.startswith(("security-secure-", "security-snort-")):
+            assert field_types(name, ["src_ip"])[name]["src_ip"] == "ip", name
+
+
+def test_installed_template_has_no_host_mapping(shipped):
+    resp = requests.get(ES_URL + "/_template/security", timeout=10)
+    assert resp.status_code == 200, resp.text
+    installed = resp.json()["security"]
+    assert installed["index_patterns"] == ["security-*"]
+    assert installed["order"] == 1
+    properties = installed["mappings"]["doc"]["properties"]
+    assert "host" not in properties
+    assert properties["src_ip"]["type"] == "ip"
+    assert properties["dst_ip"]["type"] == "ip"
+    assert properties["hostname"]["type"] == "keyword"
+    assert properties["geoip"]["properties"]["location"]["type"] == "geo_point"
+    assert properties["priority"]["type"] == "integer"
+    assert properties["alert_level"]["type"] == "integer"
+    with open(TEMPLATE) as handle:
+        assert "host" not in json.load(handle)["mappings"]["doc"]["properties"]

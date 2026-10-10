@@ -1,0 +1,71 @@
+{
+  "index_patterns": ["security-*"],
+  "order": 1,
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "mappings": {
+    "doc": {
+      "dynamic_templates": [
+        {
+          "strings_as_keyword": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword",
+              "ignore_above": 1024
+            }
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "@version": { "type": "keyword" },
+        "message": { "type": "text" },
+        "log_type": { "type": "keyword" },
+        "hostname": { "type": "keyword" },
+        "beat": {
+          "properties": {
+            "hostname": { "type": "keyword" },
+            "name": { "type": "keyword" },
+            "version": { "type": "keyword" }
+          }
+        },
+        "src_ip": { "type": "ip" },
+        "dst_ip": { "type": "ip" },
+        "src_port": { "type": "integer" },
+        "dst_port": { "type": "integer" },
+        "proto": { "type": "keyword" },
+        "gid": { "type": "integer" },
+        "sid": { "type": "integer" },
+        "rev": { "type": "integer" },
+        "alert_msg": {
+          "type": "keyword",
+          "fields": { "text": { "type": "text" } }
+        },
+        "classification": {
+          "type": "keyword",
+          "fields": { "text": { "type": "text" } }
+        },
+        "priority": { "type": "integer" },
+        "rule_id": { "type": "integer" },
+        "alert_level": { "type": "integer" },
+        "alert_description": { "type": "keyword" },
+        "fw_action": { "type": "keyword" },
+        "fw_interface": { "type": "keyword" },
+        "fw_direction": { "type": "keyword" },
+        "fw_rule": { "type": "keyword" },
+        "fw_reason": { "type": "keyword" },
+        "geoip": {
+          "properties": {
+            "ip": { "type": "ip" },
+            "country_code2": { "type": "keyword" },
+            "location": { "type": "geo_point" },
+            "latitude": { "type": "half_float" },
+            "longitude": { "type": "half_float" }
+          }
+        }
+      }
+    }
+  }
+}
