@@ -2,6 +2,7 @@
 import datetime
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -242,3 +243,47 @@ def test_elasticsearch_failure_exits_1(monkeypatch, capsys):
     code, out = run_main(monkeypatch, capsys, broken, [])
     assert code == 1
     assert "connection refused" in out.err
+
+
+@pytest.mark.parametrize("argv", [["--window", "-1"], ["--min-events", "0"],
+                                  ["--min-events", "-3"]])
+def test_out_of_range_window_or_min_events_is_a_usage_error(monkeypatch, capsys, argv):
+    fetch = FakeFetch([snort("10.0.0.1", 0)], [ossec("10.0.0.1", 10)])
+    code, out = run_main(monkeypatch, capsys, fetch, argv)
+    assert code == 1
+    assert fetch.calls == []
+    assert out.out == ""
+
+
+@pytest.mark.parametrize("snort_events,ossec_events,missing", [
+    ([], [ossec("10.0.0.1", 0)], "Snort"),
+    ([snort("10.0.0.1", 0)], [], "OSSEC"),
+])
+def test_a_source_without_events_is_reported_on_stderr(monkeypatch, capsys, snort_events,
+                                                        ossec_events, missing):
+    fetch = FakeFetch(snort_events, ossec_events)
+    code, out = run_main(monkeypatch, capsys, fetch, ["--format", "ansible"])
+    assert code == 0
+    assert json.loads(out.out) == {"block_ips": []}
+    assert "warning" in out.err
+    assert "no {} events".format(missing) in out.err
+
+
+def test_both_sources_with_events_print_no_warning(monkeypatch, capsys):
+    fetch = FakeFetch([snort("10.0.0.1", 0)], [ossec("10.0.0.9", 0)])
+    code, out = run_main(monkeypatch, capsys, fetch, [])
+    assert code == 0
+    assert out.err == ""
+
+
+@pytest.mark.skipif(correlate.Elasticsearch is None, reason="needs the elasticsearch client")
+def test_unreachable_es_error_has_no_traceback_or_credentials():
+    # Port 1 on loopback refuses connections; the URL carries a sentinel password.
+    proc = subprocess.run(
+        [sys.executable, os.path.join(REPO, "tools", "correlate.py"),
+         "--es", "http://elastic:S3NTINEL-pw@127.0.0.1:1"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60)
+    assert proc.returncode == 1
+    assert "Elasticsearch query failed" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert "S3NTINEL-pw" not in proc.stdout + proc.stderr

@@ -43,7 +43,9 @@ test-ossec: lab-down
 
 test-ansible:
 	$(COMPOSE) up -d --force-recreate target
-	$(RUN_TESTS) pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py tests/integration/test_snort_play.py tests/integration/test_ossec_play.py tests/integration/test_filebeat_play.py
+	$(RUN_TESTS) pytest --hosts=ansible://targets --sudo tests/integration/test_ssh_trust.py \
+		tests/integration/test_hardening.py tests/integration/test_snort_play.py \
+		tests/integration/test_ossec_play.py tests/integration/test_filebeat_play.py
 
 FILEBEAT_PERMS_CHECK = if $(COMPOSE) logs filebeat 2>&1 | grep -qi 'permission denied'; then \
 		echo 'filebeat cannot read shipped logs: permission denied' >&2; exit 1; fi

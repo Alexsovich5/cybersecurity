@@ -104,10 +104,43 @@ def test_empty_block_list_fails_at_the_assert(lab_target):
     assert "Validate block list" in proc.stdout
 
 
+@pytest.mark.parametrize("entry", [
+    "0.0.0.0/0",        # every IPv4 source, including the management host
+    "203.0.113.0/24",   # a network instead of one host
+    "::/0",
+    "127.0.0.1",        # loopback
+    "::1",
+    "0.0.0.0",          # unspecified
+    "224.0.0.1",        # multicast
+    "255.255.255.255",  # broadcast
+])
+def test_unsafe_entries_are_refused_before_any_change(lab_target, entry):
+    proc = play("-e", json.dumps({"block_ips": [DOC_IP, entry]}))
+    assert proc.returncode != 0
+    assert "Validate block list entries" in proc.stdout
+    assert entry in proc.stdout
+    assert parse_recap(proc.stdout)["target"]["changed"] == 0
+    assert not rule_present(entry)
+    assert not rule_present(DOC_IP)
+
+
+def test_never_block_list_protects_management_addresses(lab_target):
+    proc = play("-e", json.dumps({"block_ips": [DOC_IP],
+                                  "respond_never_block": ["203.0.113.0/28"]}))
+    assert proc.returncode != 0
+    assert "Validate block list entries" in proc.stdout
+    assert parse_recap(proc.stdout)["target"]["changed"] == 0
+    assert not rule_present(DOC_IP)
+
+
 def correlated_ips():
-    proc = run([sys.executable, CORRELATE, "--es", ES_URL, "--since", "15m",
-                "--format", "ansible"])
-    assert proc.returncode == 0, proc.stdout
+    # stdout only: correlate.py writes warnings (such as an index with no
+    # events yet) to stderr, and the blocklist must stay valid JSON.
+    proc = subprocess.run([sys.executable, CORRELATE, "--es", ES_URL, "--since", "15m",
+                           "--format", "ansible"], cwd=REPO, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, universal_newlines=True)
+    print(proc.stdout, proc.stderr)
+    assert proc.returncode == 0, proc.stderr
     return proc.stdout
 
 

@@ -2,12 +2,18 @@
 # Blocks (or unblocks) source IPs with firewalld rich rules in a zone.
 #
 #   ansible-playbook ansible/respond_block_ip.yml -e @blocklist.json \
-#     [-e block_state=absent] [-e respond_hosts=all] [-e respond_zone=drop]
+#     [-e block_state=absent] [-e respond_hosts=all] [-e respond_zone=drop] \
+#     [-e '{"respond_never_block": ["192.0.2.10", "198.51.100.0/24"]}']
 #
 # blocklist.json is the output of tools/correlate.py --format ansible:
 # {"block_ips": ["172.48.0.20", ...]}. When firewalld is running the rules
 # are applied to the live and permanent configuration; otherwise they are
 # written to the permanent configuration with firewall-offline-cmd.
+#
+# Every entry must be a single host address. Networks, loopback, unspecified,
+# multicast and broadcast addresses, and anything inside respond_never_block
+# (for example the management hosts that run this playbook) are refused
+# before any rule is changed.
 
 - name: Block correlated source IPs with firewalld
   hosts: "{{ respond_hosts | default('targets') }}"
@@ -17,6 +23,16 @@
   vars:
     block_state: present
     respond_zone: drop
+    respond_never_block: []
+    # Addresses that never belong in a block list: unspecified/"this
+    # network", loopback, multicast, reserved and broadcast.
+    respond_reserved_networks:
+      - 0.0.0.0/8
+      - 127.0.0.0/8
+      - 224.0.0.0/3
+      - ::/128
+      - ::1/128
+      - ff00::/8
 
   tasks:
     - name: Validate block list
@@ -33,8 +49,14 @@
     - name: Validate block list entries
       assert:
         that:
+          - item is string
           - item | ipaddr
-        msg: "{{ item }} is not an IP address or network"
+          - item | ipaddr('size') | int == 1
+          - (respond_reserved_networks + respond_never_block)
+            | map('network_in_network', item) | select | list | length == 0
+        msg: >-
+          {{ item }} is not a single, blockable host address (networks, loopback,
+          multicast, broadcast and respond_never_block entries are refused)
       with_items: "{{ block_ips }}"
 
     # A non-zero exit, including no D-Bus or no firewall-cmd, means the

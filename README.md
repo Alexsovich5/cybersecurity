@@ -17,8 +17,9 @@ Personal project built on the 2018-era stack (Ansible 2.4, Snort 2.9, OSSEC 2.9,
 - Filebeat 6.3.2 config that ships Snort alerts, OSSEC `alerts.json`, `/var/log/secure` and the audit log to Logstash, tagging each event with `fields.log_type`, plus an Ansible play (tag `filebeat`) that installs and configures it.
 - Logstash 6.3.2 pipeline: Beats input and UDP syslog input, grok for Snort fast alerts, OSSEC JSON field mapping, pfSense `filterlog` CSV parsing for IPv4 TCP/UDP, GeoIP on `src_ip`, per-type dated indices, and an email for Snort priority 1 and 2.
 - Elasticsearch index template for `security-*` that maps IP fields as `ip`, `geoip.location` as `geo_point`, and priority and level as `integer`.
-- `tools/correlate.py`: queries Elasticsearch over a time range and reports source IPs that appear in both Snort and OSSEC events within a time window, as a table, JSON, or Ansible extra-vars.
-- `ansible/respond_block_ip.yml`: validates a list of IPs and adds or removes firewalld rich rules in the `drop` zone, idempotently, using `firewall-offline-cmd` when firewalld is not running.
+- `tools/correlate.py`: queries Elasticsearch over a time range and reports source IPs that appear in both Snort and OSSEC events within a time window, as a table, JSON, or Ansible extra-vars. It warns on stderr when either index returns no events.
+- `ansible/respond_block_ip.yml`: validates a list of IPs and adds or removes firewalld rich rules in the `drop` zone, idempotently, using `firewall-offline-cmd` when firewalld is not running. It accepts single host addresses only and refuses networks, loopback, unspecified, multicast and broadcast addresses and anything listed in `respond_never_block`.
+- Ansible verifies the target's SSH host key: the target writes its host public keys to `/lab/keys/known_hosts` at start, and the lab inventory uses that file with strict checking.
 - Docker lab (`docker-compose.yml`): Elasticsearch, Logstash, Kibana, Filebeat, a Snort sensor sniffing the lab network, an OSSEC host, an SSH-managed CentOS 7 target, MailHog and a test runner.
 - `tools/traffic.py` writes pcaps or sends live packets matching each local Snort rule plus benign traffic; `tools/pfsense_sim.py` sends recorded pfSense `filterlog` lines as syslog.
 
@@ -39,7 +40,9 @@ Personal project built on the 2018-era stack (Ansible 2.4, Snort 2.9, OSSEC 2.9,
 - The full-system package update task exists behind `hardening_update_all_packages: false` and is not tested.
 - No Debian/Ubuntu support; the script and plays are CentOS/RHEL 7 only.
 - OS packages are the CentOS 7.5 GA builds with no later errata, so the lab lacks security fixes released after May 2018.
-- The SSH key for the target container is generated at container start into a Docker volume and is for the lab only.
+- The SSH key for the target container is generated at container start into a Docker volume and is for the lab only. `ansible/inventory/example.ini` relies on the operator's own `known_hosts` for real hosts.
+- Elasticsearch and Kibana run without authentication (X-Pack security off), and Filebeat ships to Logstash without TLS. Kibana and MailHog are published on 127.0.0.1 only; the other services are reachable only on the compose network.
+- Add the management hosts that run the response playbook to `respond_never_block`; the playbook cannot tell on its own which addresses it must not block.
 - The images are amd64-only and run slowly under emulation on ARM hosts. Elasticsearch runs with machine learning disabled and may need `vm.max_map_count=262144` on Linux hosts.
 
 ## Built with
@@ -64,7 +67,7 @@ make lab-up              # start Elasticsearch, Logstash, Kibana, Filebeat, Mail
 make demo                # send traffic and log lines, show index counts, correlate and block the shared IP
 ```
 
-Kibana is published on http://localhost:20856 and MailHog on http://localhost:20825. `make lab-down` stops the lab and removes its volumes.
+Kibana is published on http://127.0.0.1:20856 and MailHog on http://127.0.0.1:20825, both on the loopback interface only. `make lab-down` stops the lab and removes its volumes.
 
 ## Tests
 
@@ -163,8 +166,10 @@ tests/
     test_pipeline.py
     test_response.py
     test_snort_play.py
+    test_ssh_trust.py
   unit/
     test_correlate.py
+    test_lab_security.py
     test_ossec_fixture.py
     test_pfsense_sim.py
     test_readme.py

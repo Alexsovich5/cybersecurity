@@ -1,7 +1,7 @@
 #!/bin/bash
 # Linux Security Hardening Script
 #
-# CIS Benchmark-based hardening for CentOS/RHEL 7 servers.
+# Baseline hardening for CentOS/RHEL 7 servers (not a CIS benchmark mapping).
 #
 # Usage: harden_linux.sh [--check] [--root DIR] [--skip-services]
 #                        [--skip-packages] [--only STEP[,STEP..]]

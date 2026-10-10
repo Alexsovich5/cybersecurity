@@ -664,4 +664,24 @@ limitations, and generate the layout tree from tracked files.
 
 ---
 
-Task count: 17 (T1–T17). Suites added: static (T1), unit (T1, T5, T8, T12, T15, T17), base (T2), harden (T3), ansible (T4, T7, T9, T13), snort (T6), ossec (T8), pipeline (T10, T11, T12), e2e (T14–T16).
+## T18 — Security and hygiene hardening
+
+**Goal:** Close the security and correctness gaps found in a review of the whole repository.
+
+**Found and changed**
+- Kibana and MailHog were published on every host interface; Elasticsearch has no authentication and Kibana gives full access to it. Both ports are now bound to `127.0.0.1` (`tests/unit/test_lab_security.py` fails on any published port without the prefix).
+- `ansible.cfg` set `host_key_checking = False`, which also applied to `inventory/example.ini` for real hosts. The setting is removed (checking stays on). The target's entrypoint writes its host public keys to `/lab/keys/known_hosts` on every start, and `inventory/docker.ini` uses that file with `StrictHostKeyChecking=yes`. `tests/integration/test_ssh_trust.py` (run by `test-ansible`) shows that an empty or forged known_hosts makes the target unreachable and the exported one works.
+- `respond_block_ip.yml` accepted any network (`0.0.0.0/0`, `::/0`) and loopback, unspecified, multicast and broadcast addresses, so a bad block list could lock the management host out. Entries must now be single host addresses outside `respond_reserved_networks` and the new operator list `respond_never_block`; the play fails before changing anything (`test_response.py`).
+- The Logstash `secure` grok took `src_ip` from the first `from IP port N` after the user name, so an SSH user name such as `x from 198.51.100.7 port 1 ssh2` spoofed the source address. The name is now matched greedily up to the last `from IP port N ssh2` (`test_pipeline.py::test_user_name_cannot_spoof_the_secure_src_ip`). OSSEC's stock `ssh-invfailed` decoder is already anchored at the line end.
+- `correlate.py` printed the Elasticsearch client's tracebacks on stderr, accepted negative `--window` and `--min-events` below 1, and reported "No correlated source IPs" when an index returned nothing at all. The client logger is silenced (one-line error kept, no credentials from the `--es` URL in the output), the two options are range-checked, and a stderr warning names each source that returned no events (`test_correlate.py`).
+- `scripts/harden_linux.sh` called itself "CIS Benchmark-based" although nothing maps to CIS; the header now says baseline hardening.
+- A static test checks that no Dockerfile, script, repo file or playbook disables TLS or signature checks and that downloads use HTTPS. The only plain-HTTP source is the Snort/DAQ mirror (no valid certificate for its name), whose tarballs are checked against pinned sha256 sums; the only `gpgcheck=0` repo is the local `file://` repo built from sha256-verified RPMs.
+
+**Not changed**
+- Elasticsearch/Kibana stay without authentication and Beats traffic without TLS (documented in README limitations; lab-only, loopback-published).
+
+**Acceptance:** `make build && make test`
+
+---
+
+Task count: 18 (T1–T18). Suites added: static (T1), unit (T1, T5, T8, T12, T15, T17, T18), base (T2), harden (T3), ansible (T4, T7, T9, T13, T18), snort (T6), ossec (T8), pipeline (T10, T11, T12, T18), e2e (T14–T16, T18).

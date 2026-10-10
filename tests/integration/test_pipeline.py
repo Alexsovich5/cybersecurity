@@ -35,6 +35,10 @@ PFSENSE_PORT = int(os.environ.get("PFSENSE_PORT", "5140"))
 sys.path.insert(0, os.path.join(REPO, "tools"))
 import pfsense_sim  # noqa: E402
 
+SPOOFED_SECURE_LINE = (
+    "Jul 20 14:03:20 target sshd[2230]: Failed password for invalid user "
+    "x from 198.51.100.7 port 1 ssh2 from 172.48.0.20 port 40040 ssh2")
+
 HEALTH_TIMEOUT = 120
 DOC_TIMEOUT = 60
 # JRuby start-up on a loaded Docker host can take several minutes.
@@ -217,6 +221,12 @@ def shipped():
         secure_out.append("{} {}".format(line, marker))
         injected["secure{}".format(number)] = ("security-secure-*", marker)
 
+    # sshd logs the client-supplied user name verbatim, so a name can carry
+    # a fake "from <ip> port <n> ssh2" ahead of the real one.
+    marker = "m{}i1".format(run)
+    secure_out.append("{} {}".format(SPOOFED_SECURE_LINE, marker))
+    injected["spoofed1"] = ("security-secure-*", marker)
+
     audit_out = []
     for number, line in enumerate(plain_lines("audit.log"), 1):
         marker = "m{}a{}".format(run, number)
@@ -317,6 +327,15 @@ def test_secure_failed_password_gives_src_ip(shipped):
     other = [doc for doc in docs if "Failed password" not in doc["message"]]
     assert all("src_ip" not in doc for doc in other), other
     assert {doc["@timestamp"][5:10] for doc in docs} == {"07-20"}
+
+
+def test_user_name_cannot_spoof_the_secure_src_ip(shipped):
+    _, _, docs = shipped["spoofed1"]
+    assert len(docs) == 1, docs
+    doc = docs[0]
+    assert doc["src_ip"] == "172.48.0.20"
+    assert doc["src_port"] == 40040
+    assert doc["ssh_user"] == "x from 198.51.100.7 port 1 ssh2"
 
 
 def test_audit_records_are_split_into_fields(shipped):

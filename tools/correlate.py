@@ -7,7 +7,9 @@
 Events from the last --since are read from security-snort-* and
 security-ossec-*. An IP matches when at least one Snort event and one
 OSSEC event from it lie within --window seconds of each other and it has
-at least --min-events events in total.
+at least --min-events events in total. A warning goes to stderr when either
+index returns no events, so a broken pipeline is not mistaken for a quiet
+network.
 
 Exit status: 0 ok, 3 matches found with --fail-on-match, 1 on an
 Elasticsearch or usage error.
@@ -15,6 +17,7 @@ Elasticsearch or usage error.
 import argparse
 import datetime
 import json
+import logging
 import re
 import sys
 
@@ -194,15 +197,29 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(message)
 
 
+def non_negative_int(text):
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more: {}".format(text))
+    return value
+
+
+def positive_int(text):
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more: {}".format(text))
+    return value
+
+
 def build_parser():
     parser = _Parser(description="Report source IPs seen by both Snort and OSSEC.")
     parser.add_argument("--es", default="http://elasticsearch:9200",
                         help="Elasticsearch URL (default: %(default)s)")
     parser.add_argument("--since", default="15m",
                         help="how far back to look: 30s, 15m, 2h, 1d (default: %(default)s)")
-    parser.add_argument("--window", type=int, default=900,
+    parser.add_argument("--window", type=non_negative_int, default=900,
                         help="max seconds between a Snort and an OSSEC event (default: %(default)s)")
-    parser.add_argument("--min-events", type=int, default=2,
+    parser.add_argument("--min-events", type=positive_int, default=2,
                         help="min total events per IP (default: %(default)s)")
     parser.add_argument("--format", choices=sorted(FORMATTERS), default="table")
     parser.add_argument("--fail-on-match", action="store_true",
@@ -220,6 +237,11 @@ def main(argv=None):
         sys.stderr.write("correlate.py: error: {}\n".format(exc))
         return EXIT_ERROR
 
+    # The client logs every failed request with a traceback; the one-line
+    # error below is enough.
+    logging.getLogger("elasticsearch").addHandler(logging.NullHandler())
+    logging.getLogger("elasticsearch").propagate = False
+
     until = datetime.datetime.utcnow()
     start = until - since
     es = Elasticsearch([args.es]) if Elasticsearch is not None else None
@@ -229,6 +251,12 @@ def main(argv=None):
     except ElasticsearchException as exc:
         sys.stderr.write("correlate.py: Elasticsearch query failed: {}\n".format(exc))
         return EXIT_ERROR
+
+    for name, events, index in (("Snort", snort_events, SNORT_INDEX),
+                                ("OSSEC", ossec_events, OSSEC_INDEX)):
+        if not events:
+            sys.stderr.write("correlate.py: warning: no {} events with a src_ip in {} "
+                             "over the last {}\n".format(name, index, args.since))
 
     results = correlate(snort_events, ossec_events, args.window, args.min_events)
     print(FORMATTERS[args.format](results))

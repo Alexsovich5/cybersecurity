@@ -152,7 +152,7 @@ services:
     image: mailhog/mailhog:v1.0.0
     platform: linux/amd64
     ports:
-      - "20825:8025"
+      - "127.0.0.1:20825:8025"
     networks:
       - lab
 
@@ -163,7 +163,7 @@ services:
       ELASTICSEARCH_URL: http://elasticsearch:9200
       XPACK_MONITORING_ENABLED: "false"
     ports:
-      - "20856:5601"
+      - "127.0.0.1:20856:5601"
     depends_on:
       elasticsearch:
         condition: service_healthy

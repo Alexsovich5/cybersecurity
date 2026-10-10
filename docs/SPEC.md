@@ -170,6 +170,8 @@ Logstash extracts `fw_rule`, `fw_interface`, `fw_reason`, `fw_action`, `fw_direc
 | `fw_action`, `fw_interface`, `fw_direction`, `fw_rule`, `fw_reason` | keyword | pfsense |
 | `geoip.*` (`country_code2`, `location` geo_point) | object | any event with a public `src_ip` |
 
+`secure` events: `src_ip`/`src_port`/`ssh_user` come from sshd `Failed password` lines. sshd logs the client-chosen user name verbatim, so the grok matches the name greedily and takes the address from the last `from IP port N ssh2` in the line (the part sshd appends); a user name holding a fake `from ... port ... ssh2` cannot change `src_ip`.
+
 Index: `security-%{log_type}-%{+YYYY.MM.dd}`. Template: `elk/es-template.json`, `index_patterns: ["security-*"]`, single mapping type `doc`.
 
 `host` is **not** mapped in the template. Beats 6.3 adds a `host.name` object field to every event, while the Logstash `udp` input sets `host` to a string, so any fixed mapping for `host` rejects one of the two with `mapper_parsing_exception`. (This is the known 6.3 Beats/Logstash conflict; T10 confirms it against the 6.3.2 Beats release notes and records the note in `elk/logstash.conf`.) Logstash therefore copies `[host][name]` (beats) or `host` (udp) into `hostname` and removes `host` before output.
@@ -190,6 +192,8 @@ python tools/correlate.py [--es http://elasticsearch:9200] [--since 15m] [--wind
 exit: 0 ok · 3 matches found and --fail-on-match · 1 ES/usage error
 ```
 
+`--window` must be ≥ 0 and `--min-events` ≥ 1 (usage error otherwise). When either index returns no events in the range, a warning goes to stderr so an empty pipeline is not read as "no attackers". Elasticsearch failures print one line without a traceback.
+
 The library functions (`tools/correlate.py`, importable, Python 3.6-compatible, no dataclasses):
 
 - `parse_since(s) -> datetime.timedelta` for `30s`, `15m`, `2h`, `1d`.
@@ -202,15 +206,17 @@ The library functions (`tools/correlate.py`, importable, Python 3.6-compatible, 
 ```
 ansible-playbook -i INVENTORY ansible/respond_block_ip.yml -e @blocklist.json [-e block_state=absent] [-e respond_hosts=all]
 vars: block_ips (list, required, each validated with the ipaddr filter → netaddr), block_state present|absent,
-      respond_zone (default drop)
+      respond_zone (default drop), respond_never_block (list of addresses/networks, default [])
 ```
+
+Each entry must be a single host address (`ipaddr('size') == 1`). Entries inside `respond_reserved_networks` (0.0.0.0/8, 127.0.0.0/8, 224.0.0.0/3, ::/128, ::1/128, ff00::/8) or `respond_never_block` (checked with `network_in_network`) are refused, and the play fails before any rule changes.
 
 It uses the `firewalld` module (`rich_rule: 'rule family="ipv4" source address="X" drop'`, `permanent: true`, `immediate: true`) when `firewalld` is active (detected with `firewall-cmd --state`, `changed_when: false`, `failed_when: false`, where a non-zero exit means not active; `systemctl is-active` is avoided because ansible-lint's ANSIBLE0006 flags it and Ansible 2.4 has no `service_facts`), and `firewall-offline-cmd --zone=... --add-rich-rule/--remove-rich-rule` guarded by `--query-rich-rule` otherwise. The second run reports `changed=0`.
 
 ### 5.9 Ansible layout and inventory
 
-- `ansible/ansible.cfg`: `inventory = inventory/docker.ini`, `host_key_checking = False`, `retry_files_enabled = False`, `roles_path` unused. Ansible only reads `ansible.cfg` from the current directory, so the `tests` service sets `ANSIBLE_CONFIG=/src/ansible/ansible.cfg`.
-- `ansible/inventory/docker.ini`: groups `targets` (host `target`, user `ansible`, key `/lab/keys/id_rsa`), `ids_sensors` (`target`), `elk_server` (empty in the lab). Vars: `hardening_manage_services=false`, `snort_manage_service=false`, `ossec_manage_service=false`, `filebeat_manage_service=false`.
+- `ansible/ansible.cfg`: `inventory = inventory/docker.ini`, `retry_files_enabled = False`, `roles_path` unused. Host key checking stays on (Ansible's default). Ansible only reads `ansible.cfg` from the current directory, so the `tests` service sets `ANSIBLE_CONFIG=/src/ansible/ansible.cfg`.
+- `ansible/inventory/docker.ini`: groups `targets` (host `target`, user `ansible`, key `/lab/keys/id_rsa`), `ids_sensors` (`target`), `elk_server` (empty in the lab). `ansible_ssh_common_args='-o UserKnownHostsFile=/lab/keys/known_hosts -o StrictHostKeyChecking=yes'`: the target's entrypoint writes its host public keys (for its hostname and container address) to that file on every start. Vars: `hardening_manage_services=false`, `snort_manage_service=false`, `ossec_manage_service=false`, `filebeat_manage_service=false`.
 - `ansible/inventory/example.ini`: a documented example for real hosts (not used in tests). It notes that real hosts need a yum repo that carries the pinned NVRs below (for example a copy of the base image's `/opt/pinned-rpms`).
 - `ansible/group_vars/all.yml`: `snort_version: 2.9.11.1`, `daq_version: 2.0.6`, `ossec_version: 2.9.4`, `elastic_version: 6.3.2`, `logstash_host: logstash:5044` (Filebeat play; passed to the service as `LOGSTASH_HOST` by a systemd drop-in), `hardening_update_all_packages: false`, `hardening_packages` as exact NVRs: `aide-0.15.1-13.el7`, `rkhunter-1.4.6-1.el7`, `clamav-0.99.2-1.el7`, `clamav-data-empty-0.99.2-1.el7`, `fail2ban-0.9.7-1.el7`, `audit-2.8.1-3.el7`, `firewalld-0.4.4.4-14.el7`.
 - `ansible/hardening.yml` (site playbook), plays in order: hardening (all) → OSSEC (all) → Snort (ids_sensors) → Filebeat (all) → ELK (elk_server). Each play is tagged `hardening`, `ossec`, `snort`, `filebeat`, `elk`, and docs and tasks refer to plays by tag, never by number. Loops use `with_items:` (the `loop:` keyword only exists from Ansible 2.5).
@@ -329,6 +335,8 @@ Download sources for tools that have no registry (each is checked by sha256 in t
 | `clamav-data-empty-0.99.2-1.el7.noarch.rpm` | same, `noarch/` | `0ea1373d14a5cbfa01fe91f01ce03cb09c8bd48a4854d97d9a9d0d99d01647a7` |
 
 ## 7. Docker images (tags verified on Docker Hub)
+
+Every port published to the host is bound to `127.0.0.1` (Kibana `127.0.0.1:20856:5601`, MailHog `127.0.0.1:20825:8025`), because Elasticsearch runs without X-Pack security and Kibana gives full access to it.
 
 | Image | Tag | Hub API | Last pushed | Arch | Used for |
 |---|---|---|---|---|---|
