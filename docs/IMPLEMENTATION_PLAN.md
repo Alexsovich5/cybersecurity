@@ -470,16 +470,16 @@ an index template that maps IPs, geo points and alert levels.
   - `udp { port => 5140 type => "pfsense_syslog" }` sets `log_type => pfsense`; its string `host` goes to `hostname` through the same host filter;
   - grok the syslog header, then `filterlog: %{GREEDYDATA:fw_csv}`, then `csv` or `dissect` into the §5.4 fields for ipversion 4 and proto tcp/udp; tag `_pfsense_unparsed` otherwise;
   - `email` output when `[log_type] == "snort" and [priority] <= 2`, using `${SMTP_HOST:mailhog}`, `${SMTP_PORT:1025}` and `${ALERT_TO:security@example.local}`.
-- modify `docker-compose.yml`: `mailhog` (`mailhog/mailhog:v1.0.0`, port 8025); `logstash` env `SMTP_HOST=mailhog`; expose `5140/udp` on the lab network.
+- modify `docker-compose.yml`: `mailhog` (`mailhog/mailhog:v1.0.0`, UI/API 8025 published as `20825:8025`); `logstash` env `SMTP_HOST=mailhog`; expose `5140/udp` on the lab network; `tests` env `MAILHOG_URL` and `PFSENSE_HOST`/`PFSENSE_PORT`. `filebeat` keeps its registry in a named volume `filebeat-data:/usr/share/filebeat/data`, so a recreated container does not re-ship (and re-mail) alerts from earlier runs.
 - modify `Makefile`: `test-pipeline` also starts `mailhog`.
-- modify `tests/integration/test_pipeline.py`: add the pfSense and email tests.
+- modify `tests/integration/test_pipeline.py`: add the pfSense and email tests. The fixture first waits for the Logstash Beats listener on 5044 (up to 300 s), because a template kept in the ES volume does not show that a recreated Logstash is ready; it sends the UDP lines only after the Beats documents are indexed, so no datagram reaches a pipeline that is still starting.
 
 **Tests to write first:**
 - `test_pfsense_sim.py`: the frame starts with `<134>`, the timestamp is rewritten, and the CSV body is kept byte for byte.
 - `test_pipeline.py` additions:
   - after sending the fixture, `security-pfsense-*` has `fw_action == "block"`, `dst_port == 22`, `hostname` set and `geoip.country_code2` set;
   - the IPv6 line carries tag `_pfsense_unparsed`;
-  - the MailHog API has exactly one message whose subject contains `LAB telnet connection attempt` for the injected priority-1 alert, and no message for the priority-3 `LAB ICMP probe`. Messages are cleared with `DELETE /api/v1/messages` before the test.
+  - the MailHog API has exactly one message whose subject contains `LAB telnet connection attempt` for the injected priority-1 alert, and no message for the priority-3 `LAB ICMP probe`. Both checks match on this run's marker, so alerts re-shipped from earlier runs are not counted. Messages are cleared with `DELETE /api/v1/messages` before the test.
 
 **Acceptance:** `make test-pipeline && make test`
 

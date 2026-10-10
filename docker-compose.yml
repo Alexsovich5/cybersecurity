@@ -16,6 +16,7 @@ volumes:
   ossec-input:
   lab-logs:
   es-data:
+  filebeat-data:
 
 services:
   tests:
@@ -36,6 +37,9 @@ services:
       OSSEC_ALERTS: /lab/logs/ossec/alerts.json
       SECURE_LOG: /lab/logs/system/secure
       AUDIT_LOG: /lab/logs/system/audit/audit.log
+      MAILHOG_URL: http://mailhog:8025
+      PFSENSE_HOST: logstash
+      PFSENSE_PORT: "5140"
     networks:
       - lab
 
@@ -116,12 +120,26 @@ services:
       xpack.monitoring.enabled: "false"
       LS_JAVA_OPTS: -Xms512m -Xmx512m
       ES_HOSTS: elasticsearch:9200
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    expose:
+      - "5140/udp"
     volumes:
       - ./elk/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
       - ./elk/es-template.json:/usr/share/logstash/templates/security.json:ro
     depends_on:
       elasticsearch:
         condition: service_healthy
+      mailhog:
+        condition: service_started
+    networks:
+      - lab
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.0
+    platform: linux/amd64
+    ports:
+      - "20825:8025"
     networks:
       - lab
 
@@ -155,6 +173,7 @@ services:
       - lab-logs:/lab/logs/system:ro
       - snort-logs:/lab/logs/snort:ro
       - ossec-logs:/lab/logs/ossec:ro
+      - filebeat-data:/usr/share/filebeat/data
     depends_on:
       - logstash
     networks:

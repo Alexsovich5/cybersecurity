@@ -1,11 +1,17 @@
 """Filebeat -> Logstash -> Elasticsearch: fixture alerts become parsed documents.
 
 The fixture appends every Snort fast-alert line, the OSSEC JSON alert, the
-sshd lines of the secure log and the auditd lines to the files Filebeat watches, each tagged with a marker that is unique to this
-run, then looks the resulting documents up in Elasticsearch by that marker.
+sshd lines of the secure log and the auditd lines to the files Filebeat
+watches, and sends the pfSense filterlog lines to the Logstash UDP syslog
+input. Each line carries a marker that is unique to this run; the tests look
+the resulting documents up in Elasticsearch by that marker and read the
+alert mails Logstash sent to MailHog.
 """
+import datetime
 import json
 import os
+import socket
+import sys
 import time
 import uuid
 
@@ -21,9 +27,18 @@ OSSEC_ALERTS = os.environ.get("OSSEC_ALERTS", "/lab/logs/ossec/alerts.json")
 SECURE_LOG = os.environ.get("SECURE_LOG", "/lab/logs/system/secure")
 AUDIT_LOG = os.environ.get("AUDIT_LOG", "/lab/logs/system/audit/audit.log")
 TEMPLATE = os.path.join(REPO, "elk", "es-template.json")
+MAILHOG_URL = os.environ.get("MAILHOG_URL", "http://mailhog:8025")
+LOGSTASH_HOST = os.environ.get("PFSENSE_HOST", "logstash")
+PFSENSE_HOST = LOGSTASH_HOST
+PFSENSE_PORT = int(os.environ.get("PFSENSE_PORT", "5140"))
+
+sys.path.insert(0, os.path.join(REPO, "tools"))
+import pfsense_sim  # noqa: E402
 
 HEALTH_TIMEOUT = 120
 DOC_TIMEOUT = 60
+# JRuby start-up on a loaded Docker host can take several minutes.
+LOGSTASH_TIMEOUT = 300
 
 
 def wait_for_es(timeout=HEALTH_TIMEOUT):
@@ -52,6 +67,22 @@ def wait_for_template(name="security", timeout=HEALTH_TIMEOUT):
             return
         time.sleep(2)
     raise RuntimeError("index template {} not installed after {}s".format(name, timeout))
+
+
+def wait_for_logstash(timeout=LOGSTASH_TIMEOUT):
+    """Wait until the Logstash pipeline listens for Beats on 5044.
+
+    The template may survive from an earlier run in the ES volume, so its
+    presence alone does not show that a freshly started Logstash is ready.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            socket.create_connection((LOGSTASH_HOST, 5044), timeout=5).close()
+            return
+        except OSError:
+            time.sleep(2)
+    raise RuntimeError("Logstash beats input not listening after {}s".format(timeout))
 
 
 def drop_untyped_indices():
@@ -120,6 +151,28 @@ def plain_lines(name):
         return [line.rstrip("\n") for line in handle if line.strip()]
 
 
+def clear_mail():
+    requests.delete(MAILHOG_URL + "/api/v1/messages", timeout=10).raise_for_status()
+
+
+def mail_subjects():
+    resp = requests.get(MAILHOG_URL + "/api/v2/messages", params={"limit": 250}, timeout=10)
+    resp.raise_for_status()
+    return [subject
+            for item in resp.json()["items"]
+            for subject in item["Content"]["Headers"].get("Subject", [])]
+
+
+def send_pfsense(lines):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        for line in lines:
+            sock.sendto(pfsense_sim.frame(line, datetime.datetime.now()),
+                        (PFSENSE_HOST, PFSENSE_PORT))
+    finally:
+        sock.close()
+
+
 def append(path, lines):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a") as handle:
@@ -131,8 +184,10 @@ def append(path, lines):
 def shipped():
     """Inject the fixture lines and return {key: (index, marker, docs)}."""
     wait_for_es()
+    wait_for_logstash()
     wait_for_template()
     drop_untyped_indices()
+    clear_mail()
     run = uuid.uuid4().hex[:12]
 
     injected = {}
@@ -170,8 +225,22 @@ def shipped():
     append(SECURE_LOG, secure_out)
     append(AUDIT_LOG, audit_out)
 
-    return {key: (index, marker, wait_for_docs(index, marker))
-            for key, (index, marker) in injected.items()}
+    found = {key: (index, marker, wait_for_docs(index, marker))
+             for key, (index, marker) in injected.items()}
+
+    # The UDP lines are sent once the Beats events are indexed, so the
+    # Logstash inputs are known to be running and no datagram is lost.
+    # The marker is a trailing word after the last CSV column.
+    pfsense = {}
+    pfsense_out = []
+    for number, line in enumerate(plain_lines("pfsense_filterlog.log"), 1):
+        marker = "m{}p{}".format(run, number)
+        pfsense_out.append("{} {}".format(line, marker))
+        pfsense["pfsense{}".format(number)] = ("security-pfsense-*", marker)
+    send_pfsense(pfsense_out)
+    found.update((key, (index, marker, wait_for_docs(index, marker)))
+                 for key, (index, marker) in pfsense.items())
+    return found
 
 
 def docs_of(shipped, prefix):
@@ -310,3 +379,67 @@ def test_installed_template_has_no_host_mapping(shipped):
     assert properties["alert_level"]["type"] == "integer"
     with open(TEMPLATE) as handle:
         assert "host" not in json.load(handle)["mappings"]["doc"]["properties"]
+
+
+def test_pfsense_block_to_ssh_is_parsed(shipped):
+    docs = [doc for doc in docs_of(shipped, "pfsense")
+            if doc.get("fw_action") == "block" and doc.get("dst_port") == 22]
+    assert len(docs) == 1, docs_of(shipped, "pfsense")
+    doc = docs[0]
+    assert doc["log_type"] == "pfsense"
+    assert doc["fw_rule"] == "5"
+    assert doc["fw_interface"] == "em0"
+    assert doc["fw_reason"] == "match"
+    assert doc["fw_direction"] == "in"
+    assert doc["proto"] == "tcp"
+    assert doc["src_ip"] == "8.8.8.8"
+    assert doc["dst_ip"] == "172.48.0.10"
+    assert doc["src_port"] == 51234
+    assert doc.get("hostname")
+    assert doc["geoip"]["country_code2"] == "US"
+    assert "_pfsense_unparsed" not in doc.get("tags", [])
+
+
+def test_pfsense_ipv4_tcp_and_udp_lines_are_parsed(shipped):
+    parsed = [doc for doc in docs_of(shipped, "pfsense")
+              if "_pfsense_unparsed" not in doc.get("tags", [])]
+    got = sorted((doc["fw_action"], doc["proto"], doc["dst_port"]) for doc in parsed)
+    assert got == [("block", "tcp", 22), ("block", "tcp", 23), ("pass", "udp", 40053)]
+
+
+def test_pfsense_ipv6_line_is_tagged_unparsed(shipped):
+    docs = shipped["pfsense4"][2]
+    assert len(docs) == 1, docs
+    doc = docs[0]
+    assert doc["log_type"] == "pfsense"
+    assert "_pfsense_unparsed" in doc.get("tags", [])
+    assert "src_ip" not in doc
+    assert "fw_action" not in doc
+    assert doc.get("hostname")
+
+
+def wait_for_subject(text, timeout=DOC_TIMEOUT):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if any(text in subject for subject in mail_subjects()):
+            time.sleep(3)
+            return mail_subjects()
+        time.sleep(2)
+    raise AssertionError("no mail with subject containing {!r} after {}s ({})".format(
+        text, timeout, mail_subjects()))
+
+
+def test_priority_one_snort_alert_is_mailed_once(shipped):
+    marker = shipped["snort2"][1]
+    subjects = wait_for_subject(marker)
+    # Only this run's marker is counted: a recreated Filebeat may re-ship
+    # alerts appended by earlier runs after the mailbox was cleared.
+    expected = "High Priority Snort Alert: LAB telnet connection attempt " + marker
+    assert [s for s in subjects if marker in s] == [expected], subjects
+
+
+def test_priority_three_snort_alert_is_not_mailed(shipped):
+    subjects = wait_for_subject(shipped["snort2"][1])
+    assert not [s for s in subjects if shipped["snort1"][1] in s], subjects
+    # Priority 2 and 1 alerts from the same run are mailed too.
+    assert any(shipped["snort3"][1] in s for s in subjects), subjects
