@@ -36,13 +36,73 @@
 
 - name: Deploy OSSEC HIDS in local mode
   hosts: all
+  become: yes
   gather_facts: no
   tags: [ossec]
 
   tasks:
-    - name: Placeholder until the OSSEC play is implemented
-      debug:
-        msg: "OSSEC deployment is added in T9"
+    - name: Create the deployment directories
+      file:
+        path: "/opt/cybersec/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      with_items:
+        - scripts
+        - config
+
+    - name: Copy the OSSEC configuration sources
+      copy:
+        src: "{{ playbook_dir }}/../config/{{ item }}"
+        dest: "/opt/cybersec/config/{{ item }}"
+        owner: root
+        group: root
+        mode: 0644
+      with_items:
+        - ossec.conf
+        - ossec_local_rules.xml
+
+    - name: Copy the OSSEC install script
+      copy:
+        src: "{{ playbook_dir }}/../scripts/deploy_ossec.sh"
+        dest: /opt/cybersec/scripts/deploy_ossec.sh
+        owner: root
+        group: root
+        mode: 0755
+
+    # deploy_ossec.sh records the version in /etc/ossec-init.conf only after
+    # a successful install, so the build runs once per host.
+    - name: Build and install OSSEC in local mode
+      command: /opt/cybersec/scripts/deploy_ossec.sh --config-dir /opt/cybersec/config
+      args:
+        creates: /var/ossec/bin/ossec-control
+
+    # The install script only runs once, so later configuration changes
+    # are shipped here and trigger a restart.
+    - name: Install ossec.conf and local rules
+      copy:
+        src: "/opt/cybersec/config/{{ item.src }}"
+        dest: "/var/ossec/{{ item.dest }}"
+        remote_src: yes
+        owner: root
+        group: ossec
+        mode: 0440
+      with_items:
+        - {src: ossec.conf, dest: etc/ossec.conf}
+        - {src: ossec_local_rules.xml, dest: rules/local_rules.xml}
+      notify: Restart ossec
+
+    - name: Start OSSEC
+      command: /var/ossec/bin/ossec-control start
+      register: ossec_start
+      changed_when: "'Started' in ossec_start.stdout"
+      when: ossec_manage_service | bool
+
+  handlers:
+    - name: Restart ossec
+      command: /var/ossec/bin/ossec-control restart
+      when: ossec_manage_service | bool
 
 - name: Deploy Snort IDS on network sensors
   hosts: ids_sensors
