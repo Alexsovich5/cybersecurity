@@ -65,7 +65,7 @@ lab-down:
 	$(COMPOSE) down -v
 
 test-e2e: lab-up
-	$(RUN_TESTS) pytest tests/integration/test_end_to_end.py
+	$(RUN_TESTS) pytest tests/integration/test_end_to_end.py tests/integration/test_correlate_es.py
 
 ES_COUNTS = import requests; print(requests.get("http://elasticsearch:9200/_cat/indices/security-*", \
 	params={"v": "true", "h": "index,docs.count", "s": "index"}, timeout=10).text)
