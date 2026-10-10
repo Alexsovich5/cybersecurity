@@ -1,0 +1,1 @@
+{"rule":{"level":12,"comment":"SSH authentication failures from one source (possible brute force)","sidid":100020},"srcip":"172.48.0.20","dstuser":"root","location":"/var/log/lab/secure","full_log":"Jul 20 14:03:10 target sshd[2211]: Failed password for root from 172.48.0.20 port 40022 ssh2"}

@@ -1,0 +1,19 @@
+<!-- Local rules, installed as /var/ossec/rules/local_rules.xml. -->
+<group name="local,sshd,">
+
+  <!-- sshd refuses a root login because PermitRootLogin is "no". -->
+  <rule id="100010" level="10">
+    <if_sid>5700</if_sid>
+    <match>ROOT LOGIN REFUSED</match>
+    <description>Root SSH login attempt blocked by hardening policy</description>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <!-- Raises stock rule 5720 (repeated 5716 failures from the same source). -->
+  <rule id="100020" level="12">
+    <if_sid>5720</if_sid>
+    <description>SSH authentication failures from one source (possible brute force)</description>
+    <group>authentication_failures,</group>
+  </rule>
+
+</group>

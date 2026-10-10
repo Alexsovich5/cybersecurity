@@ -317,7 +317,7 @@ install a systemd unit that is only started when services are managed.
   - skip the build if `/etc/ossec-init.conf` has `VERSION="v2.9.4"`.
 - create `config/ossec.conf` (§5.3).
 - create `config/ossec_local_rules.xml`: rule 100010, and rule 100020 as a child of stock rule 5720 (`<rule id="100020" level="12"><if_sid>5720</if_sid><description>...</description></rule>`, §5.3).
-- create `docker/ossec/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `COPY scripts/deploy_ossec.sh /opt/cybersec/scripts/`; `COPY config/ossec.conf config/ossec_local_rules.xml /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/deploy_ossec.sh --config-dir /opt/cybersec/config`; `COPY docker/ossec/entrypoint.sh /usr/local/bin/`.
+- create `docker/ossec/Dockerfile` (build context: repo root): `FROM cybersecurity:base`; `yum downgrade -y krb5-libs-1.15.1-18.el7 libcom_err-1.42.9-11.el7` (deviation found in T8: the GA `krb5-devel` and `libcom_err-devel` that `openssl-devel` pulls in require exactly these GA builds, and the rootfs carries the newer `updates` builds — same cause as the `snort` and `target` downgrades, §7); `COPY scripts/deploy_ossec.sh /opt/cybersec/scripts/`; `COPY config/ossec.conf config/ossec_local_rules.xml /opt/cybersec/config/`; `RUN /opt/cybersec/scripts/deploy_ossec.sh --config-dir /opt/cybersec/config`; `COPY docker/ossec/entrypoint.sh /usr/local/bin/`.
 - create `docker/ossec/entrypoint.sh`: `mkdir -p /var/log/lab && touch /var/log/lab/secure /var/log/secure`; `/var/ossec/bin/ossec-control start`; `exec tail -F /var/ossec/logs/ossec.log`.
 - create `tests/fixtures/secure_auth_failures.log` (real-format CentOS 7 sshd lines: 10× `Failed password for root from 172.48.0.20`, 1× `ROOT LOGIN REFUSED FROM 172.48.0.20`, 1× `Accepted publickey`).
 - create `tests/fixtures/ossec_alert.json` (one 100020 line captured from the running image).
@@ -329,7 +329,7 @@ install a systemd unit that is only started when services are managed.
 
 **Tests to write first:**
 - `ossec.bats` checks that:
-  - `/var/ossec/bin/ossec-logtest -v` on single fixture lines reports `Rule id: '5716'`, `'100010'`, `'5715'`;
+  - `/var/ossec/bin/ossec-logtest -v` on single fixture lines reports `Rule id: '5716'` and `'100010'`; for the `Accepted publickey` line the verbose trace shows `*Rule 5715 matched.` and the reported rule is its stock child `'10100'` (first time user logged in);
   - feeding the 10 failure lines to one `ossec-logtest` session reports `Rule id: '100020'` for a later line (and not for the first);
   - after `ossec-control start` and appending the fixture to `/var/log/lab/secure`, `alerts.json` gets a line whose `rule.sidid` is 100020 and whose `srcip` is `172.48.0.20` within 30 s (poll loop);
   - that line parses with `python -c 'import json,sys; json.loads(...)'`.

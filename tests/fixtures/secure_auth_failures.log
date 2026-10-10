@@ -1,0 +1,12 @@
+Jul 20 14:03:02 target sshd[2201]: Failed password for root from 172.48.0.20 port 40012 ssh2
+Jul 20 14:03:03 target sshd[2201]: Failed password for root from 172.48.0.20 port 40012 ssh2
+Jul 20 14:03:05 target sshd[2201]: Failed password for root from 172.48.0.20 port 40012 ssh2
+Jul 20 14:03:06 target sshd[2203]: Failed password for root from 172.48.0.20 port 40014 ssh2
+Jul 20 14:03:07 target sshd[2203]: Failed password for root from 172.48.0.20 port 40014 ssh2
+Jul 20 14:03:08 target sshd[2203]: Failed password for root from 172.48.0.20 port 40014 ssh2
+Jul 20 14:03:09 target sshd[2211]: Failed password for root from 172.48.0.20 port 40022 ssh2
+Jul 20 14:03:10 target sshd[2211]: Failed password for root from 172.48.0.20 port 40022 ssh2
+Jul 20 14:03:11 target sshd[2211]: Failed password for root from 172.48.0.20 port 40022 ssh2
+Jul 20 14:03:12 target sshd[2215]: Failed password for root from 172.48.0.20 port 40026 ssh2
+Jul 20 14:03:14 target sshd[2218]: ROOT LOGIN REFUSED FROM 172.48.0.20 port 40030
+Jul 20 14:04:02 target sshd[2240]: Accepted publickey for ansible from 172.48.0.1 port 40100 ssh2: RSA SHA256:3bx0SPk0yG0uWbqzAd9vWGqk5LDjv+o1yhGL5CVkzk4

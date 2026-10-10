@@ -1,13 +1,13 @@
 COMPOSE ?= docker compose
 RUN_TESTS = $(COMPOSE) run --rm tests
 
-.PHONY: build test test-static test-unit test-base test-harden test-snort test-ansible shell clean
+.PHONY: build test test-static test-unit test-base test-harden test-snort test-ossec test-ansible shell clean
 
 build:
 	$(COMPOSE) build base
 	$(COMPOSE) build
 
-test: test-static test-unit test-base test-harden test-snort test-ansible
+test: test-static test-unit test-base test-harden test-snort test-ossec test-ansible
 
 test-static:
 	$(RUN_TESTS) sh -c '\
@@ -31,6 +31,9 @@ test-harden:
 test-snort:
 	$(COMPOSE) run --rm --no-deps tests python tools/traffic.py write /lab/pcaps
 	$(COMPOSE) run --rm --no-deps snort bats /src/tests/bats/snort.bats
+
+test-ossec:
+	$(COMPOSE) run --rm --no-deps ossec bats /src/tests/bats/ossec.bats
 
 test-ansible:
 	$(COMPOSE) up -d --force-recreate target

@@ -12,6 +12,8 @@ volumes:
   lab-keys:
   pcaps:
   snort-logs:
+  ossec-logs:
+  ossec-input:
 
 services:
   tests:
@@ -61,6 +63,19 @@ services:
     volumes:
       - snort-logs:/var/log/snort
       - pcaps:/lab/pcaps:ro
+      - ./tests:/src/tests:ro
+    networks:
+      - lab
+
+  ossec:
+    build:
+      context: .
+      dockerfile: docker/ossec/Dockerfile
+    image: cybersecurity:ossec
+    platform: linux/amd64
+    volumes:
+      - ossec-logs:/var/ossec/logs/alerts
+      - ossec-input:/var/log/lab
       - ./tests:/src/tests:ro
     networks:
       - lab
