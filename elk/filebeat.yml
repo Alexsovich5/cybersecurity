@@ -1,0 +1,26 @@
+---
+# Ships Snort fast alerts and OSSEC JSON alerts to Logstash.
+# Each input tags its events with fields.log_type, which Logstash uses
+# to pick the filter and the security-<log_type>-* index.
+
+filebeat.inputs:
+  - type: log
+    paths:
+      - ${SNORT_ALERT:/var/log/snort/alert}
+    scan_frequency: 2s
+    fields:
+      log_type: snort
+    fields_under_root: false
+
+  - type: log
+    paths:
+      - ${OSSEC_ALERTS:/var/ossec/logs/alerts/alerts.json}
+    scan_frequency: 2s
+    json.keys_under_root: false
+    json.add_error_key: true
+    fields:
+      log_type: ossec
+    fields_under_root: false
+
+output.logstash:
+  hosts: ["${LOGSTASH_HOST:logstash:5044}"]

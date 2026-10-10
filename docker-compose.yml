@@ -14,6 +14,7 @@ volumes:
   snort-logs:
   ossec-logs:
   ossec-input:
+  es-data:
 
 services:
   tests:
@@ -25,6 +26,12 @@ services:
       - .:/src
       - lab-keys:/lab/keys:ro
       - pcaps:/lab/pcaps
+      - snort-logs:/lab/logs/snort
+      - ossec-logs:/lab/logs/ossec
+    environment:
+      ES_URL: http://elasticsearch:9200
+      SNORT_ALERT: /lab/logs/snort/alert
+      OSSEC_ALERTS: /lab/logs/ossec/alerts.json
     networks:
       - lab
 
@@ -77,5 +84,70 @@ services:
       - ossec-logs:/var/ossec/logs/alerts
       - ossec-input:/var/log/lab
       - ./tests:/src/tests:ro
+    networks:
+      - lab
+
+  elasticsearch:
+    image: elastic/elasticsearch:6.3.2
+    platform: linux/amd64
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      xpack.security.enabled: "false"
+      xpack.ml.enabled: "false"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+    networks:
+      - lab
+
+  logstash:
+    image: elastic/logstash:6.3.2
+    platform: linux/amd64
+    environment:
+      xpack.monitoring.enabled: "false"
+      LS_JAVA_OPTS: -Xms512m -Xmx512m
+      ES_HOSTS: elasticsearch:9200
+    volumes:
+      - ./elk/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - lab
+
+  kibana:
+    image: elastic/kibana:6.3.2
+    platform: linux/amd64
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      XPACK_MONITORING_ENABLED: "false"
+    ports:
+      - "20856:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - lab
+
+  filebeat:
+    image: elastic/filebeat:6.3.2
+    platform: linux/amd64
+    user: root
+    command: ["filebeat", "-e", "-strict.perms=false"]
+    environment:
+      SNORT_ALERT: /lab/logs/snort/alert
+      OSSEC_ALERTS: /lab/logs/ossec/alerts.json
+      LOGSTASH_HOST: logstash:5044
+    volumes:
+      - ./elk/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - snort-logs:/lab/logs/snort:ro
+      - ossec-logs:/lab/logs/ossec:ro
+    depends_on:
+      - logstash
     networks:
       - lab

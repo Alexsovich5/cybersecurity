@@ -393,10 +393,11 @@ rules with change handlers gated on service management.
   - OSSEC: `rename` `[json][rule][level]`→`alert_level`, `[json][rule][sidid]`→`rule_id`, `[json][rule][comment]`→`alert_description`, `[json][srcip]`→`src_ip`, `[json][full_log]`→`message`; `date` on the syslog prefix of `message` (tag `_ossec_time_fallback` on failure); `remove_field json`;
   - `geoip` only if `[src_ip]`;
   - output `elasticsearch { hosts => ["${ES_HOSTS:elasticsearch:9200}"] index => "security-%{log_type}-%{+YYYY.MM.dd}" }`.
+  - the old hard-coded `email` output is removed here; T12 adds it back with the MailHog/env settings.
 - modify `docker-compose.yml`:
   - `elasticsearch` (`elastic/elasticsearch:6.3.2`, `discovery.type=single-node`, `ES_JAVA_OPTS=-Xms512m -Xmx512m`, `xpack.security.enabled=false`, `xpack.ml.enabled=false`, healthcheck on `_cluster/health`);
   - `logstash` (`elastic/logstash:6.3.2`; mounts the pipeline at `/usr/share/logstash/pipeline/logstash.conf`; `xpack.monitoring.enabled=false`);
-  - `kibana` (`elastic/kibana:6.3.2`, port 5601);
+  - `kibana` (`elastic/kibana:6.3.2`, published as `20856:5601`);
   - `filebeat` (`elastic/filebeat:6.3.2`, `user: root`, command adds `-strict.perms=false`, mounts `snort-logs` and `ossec-logs` read-only, env `SNORT_ALERT`/`OSSEC_ALERTS` pointing at the mounts);
   - `tests` mounts `snort-logs` and `ossec-logs` read-write for fixture injection.
 - create `tests/fixtures/snort_alert.fast` (one line each for SIDs 1000001–1000004, priorities 3/1/2/1, src `172.48.0.20` / `8.8.8.8`).

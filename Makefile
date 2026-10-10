@@ -1,17 +1,17 @@
 COMPOSE ?= docker compose
 RUN_TESTS = $(COMPOSE) run --rm tests
 
-.PHONY: build test test-static test-unit test-base test-harden test-snort test-ossec test-ansible shell clean
+.PHONY: build test test-static test-unit test-base test-harden test-snort test-ossec test-ansible test-pipeline shell clean
 
 build:
 	$(COMPOSE) build base
 	$(COMPOSE) build
 
-test: test-static test-unit test-base test-harden test-snort test-ossec test-ansible
+test: test-static test-unit test-base test-harden test-snort test-ossec test-ansible test-pipeline
 
 test-static:
 	$(RUN_TESTS) sh -c '\
-		yamllint -s ansible docker-compose.yml && \
+		yamllint -s ansible elk/*.yml docker-compose.yml && \
 		shellcheck scripts/*.sh && \
 		shellcheck docker/*/*.sh && \
 		for f in scripts/*.sh; do bash -n "$$f" || exit 1; done && \
@@ -38,6 +38,15 @@ test-ossec:
 test-ansible:
 	$(COMPOSE) up -d --force-recreate target
 	$(RUN_TESTS) pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py tests/integration/test_snort_play.py tests/integration/test_ossec_play.py
+
+FILEBEAT_PERMS_CHECK = if $(COMPOSE) logs filebeat 2>&1 | grep -qi 'permission denied'; then \
+		echo 'filebeat cannot read shipped logs: permission denied' >&2; exit 1; fi
+
+test-pipeline:
+	$(COMPOSE) up -d elasticsearch logstash filebeat
+	sleep 10
+	@$(FILEBEAT_PERMS_CHECK)
+	$(RUN_TESTS) pytest tests/integration/test_pipeline.py || { $(FILEBEAT_PERMS_CHECK); exit 1; }
 
 shell:
 	$(RUN_TESTS) bash
