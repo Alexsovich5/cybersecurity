@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Snort {{ snort_version }} network intrusion detection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/snort -q -u snort -g snort -c /etc/snort/snort.conf -i {{ snort_interface }}
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

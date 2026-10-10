@@ -4,6 +4,9 @@ daq_version: "2.0.6"
 ossec_version: "2.9.4"
 elastic_version: "6.3.2"
 
+# Interface the Snort sensor listens on.
+snort_interface: eth0
+
 # Full-system "yum update" is not deterministic; it stays off unless asked for.
 hardening_update_all_packages: false
 

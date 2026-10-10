@@ -280,6 +280,7 @@ tested against the generated pcaps.
   - `systemd` enable/start only `when: snort_manage_service`.
 - create `ansible/templates/snort.service.j2`: `ExecStart=/usr/local/bin/snort -q -u snort -g snort -c /etc/snort/snort.conf -i {{ snort_interface }}` (`snort_interface` defaults to `eth0` in `group_vars/all.yml`).
 - create `tests/integration/test_snort_play.py`.
+- modify `docker/target/Dockerfile`: next to `libcom_err`, also `yum downgrade` `krb5-libs-1.15.1-18.el7 libstdc++-4.8.5-28.el7 libgcc-4.8.5-28.el7`, because `setup_snort.sh` installs the same GA build deps on the target as in the `snort` image (deviation found in T7: without it `krb5-devel` does not resolve against the rootfs's `krb5-libs-1.15.1-19.el7`).
 - modify `Makefile`: `test-ansible` also runs `test_snort_play.py`.
 
 **Tests to write first:** `test_snort_play.py` checks that:

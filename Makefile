@@ -34,7 +34,7 @@ test-snort:
 
 test-ansible:
 	$(COMPOSE) up -d --force-recreate target
-	$(RUN_TESTS) pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py
+	$(RUN_TESTS) pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py tests/integration/test_snort_play.py
 
 shell:
 	$(RUN_TESTS) bash

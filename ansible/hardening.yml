@@ -46,13 +46,82 @@
 
 - name: Deploy Snort IDS on network sensors
   hosts: ids_sensors
+  become: yes
   gather_facts: no
   tags: [snort]
 
   tasks:
-    - name: Placeholder until the Snort play is implemented
-      debug:
-        msg: "Snort sensor deployment is added in T7"
+    - name: Create the deployment directory
+      file:
+        path: /opt/cybersec/scripts
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Copy Snort configuration sources
+      copy:
+        src: "{{ playbook_dir }}/../config"
+        dest: /opt/cybersec/
+        owner: root
+        group: root
+        mode: 0644
+        directory_mode: 0755
+
+    - name: Copy the Snort install script
+      copy:
+        src: "{{ playbook_dir }}/../scripts/setup_snort.sh"
+        dest: /opt/cybersec/scripts/setup_snort.sh
+        owner: root
+        group: root
+        mode: 0755
+
+    # setup_snort.sh writes the marker only after a verified build, so the
+    # build runs once per Snort version.
+    - name: Build and install DAQ and Snort
+      command: /opt/cybersec/scripts/setup_snort.sh --config-dir /opt/cybersec/config
+      args:
+        creates: "/etc/snort/.installed-{{ snort_version }}"
+
+    # The install script only runs once, so later configuration changes
+    # are shipped here and trigger a restart.
+    - name: Install snort.conf and local rules
+      copy:
+        src: "/opt/cybersec/config/{{ item.src }}"
+        dest: "/etc/snort/{{ item.dest }}"
+        remote_src: yes
+        owner: root
+        group: root
+        mode: 0644
+      with_items:
+        - {src: snort.conf, dest: snort.conf}
+        - {src: rules/local.rules, dest: rules/local.rules}
+      notify: Restart snort
+
+    - name: Install the Snort systemd unit
+      template:
+        src: templates/snort.service.j2
+        dest: /etc/systemd/system/snort.service
+        owner: root
+        group: root
+        mode: 0644
+      notify: Restart snort
+
+    - name: Enable and start Snort
+      systemd:
+        name: snort
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      when: snort_manage_service | bool
+
+  handlers:
+    - name: Restart snort
+      systemd:
+        name: snort
+        state: restarted
+        daemon_reload: yes
+      when: snort_manage_service | bool
 
 - name: Ship security logs with Filebeat
   hosts: all
