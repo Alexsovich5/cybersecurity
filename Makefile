@@ -16,6 +16,8 @@ test-static:
 		shellcheck docker/*/*.sh && \
 		for f in scripts/*.sh; do bash -n "$$f" || exit 1; done && \
 		ansible-playbook -i localhost, --syntax-check ansible/hardening.yml && \
+		ansible-playbook --syntax-check --tags elk ansible/hardening.yml && \
+		ansible-playbook --list-tasks --tags elk ansible/hardening.yml && \
 		ansible-lint ansible/hardening.yml && \
 		python -m py_compile tools/*.py && \
 		python -m json.tool elk/es-template.json > /dev/null'
@@ -38,7 +40,7 @@ test-ossec:
 
 test-ansible:
 	$(COMPOSE) up -d --force-recreate target
-	$(RUN_TESTS) pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py tests/integration/test_snort_play.py tests/integration/test_ossec_play.py
+	$(RUN_TESTS) pytest --hosts=ansible://targets --sudo tests/integration/test_hardening.py tests/integration/test_snort_play.py tests/integration/test_ossec_play.py tests/integration/test_filebeat_play.py
 
 FILEBEAT_PERMS_CHECK = if $(COMPOSE) logs filebeat 2>&1 | grep -qi 'permission denied'; then \
 		echo 'filebeat cannot read shipped logs: permission denied' >&2; exit 1; fi

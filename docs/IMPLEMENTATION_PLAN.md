@@ -499,7 +499,7 @@ simulator, and route priority 1-2 Snort alerts to MailHog via SMTP.
 
 **Files**
 - modify `ansible/hardening.yml`:
-  - play tagged `filebeat` (hosts `all`, replaces the placeholder): `rpm_key` for the Elastic GPG key; `yum_repository` for the elastic 6.x repo; `yum: name=filebeat-{{ elastic_version }}`; template `elk/filebeat.yml` → `/etc/filebeat/filebeat.yml` (mode 0600, with the `logstash_host` var); service guarded by `filebeat_manage_service`.
+  - play tagged `filebeat` (hosts `all`, replaces the placeholder): `rpm_key` for the Elastic GPG key; `yum_repository` for the elastic 6.x repo; `yum: name=filebeat-{{ elastic_version }}`; template `elk/filebeat.yml` → `/etc/filebeat/filebeat.yml` (mode 0600); the `logstash_host` var (`group_vars/all.yml`, default `logstash:5044`) reaches the file's `${LOGSTASH_HOST}` through a systemd drop-in `/etc/systemd/system/filebeat.service.d/logstash.conf` (`Environment="LOGSTASH_HOST=..."`), so the config file stays byte-identical to the container's and re-runs stay `changed=0`; service guarded by `filebeat_manage_service`.
   - play tagged `elk` (hosts `elk_server`, replaces the placeholder): the same repo; `elasticsearch-6.3.2`, `logstash-6.3.2`, `kibana-6.3.2`; copy `logstash.conf` → `/etc/logstash/conf.d/security.conf` and the template → `/etc/logstash/templates/security.json`; `systemd` enable/start `with_items` over the three services. A comment at the top of the play says it is illustrative and not executed in tests.
 - modify `elk/filebeat.yml`: the logstash host as `${LOGSTASH_HOST:logstash:5044}`, so the same file serves the container and the Ansible copy.
 - create `tests/integration/test_filebeat_play.py`.

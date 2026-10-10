@@ -185,20 +185,141 @@
 
 - name: Ship security logs with Filebeat
   hosts: all
+  become: yes
   gather_facts: no
   tags: [filebeat]
 
   tasks:
-    - name: Placeholder until the Filebeat play is implemented
-      debug:
-        msg: "Filebeat deployment is added in T13"
+    - name: Import the Elastic GPG key
+      rpm_key:
+        key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+      register: elastic_key
+      until: elastic_key is succeeded
+      retries: 3
+      delay: 5
 
+    - name: Add the Elastic 6.x yum repository
+      yum_repository:
+        name: elastic-6.x
+        description: Elastic repository for 6.x packages
+        baseurl: https://artifacts.elastic.co/packages/6.x/yum
+        gpgcheck: yes
+        gpgkey: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        enabled: yes
+
+    - name: Install Filebeat at the pinned version
+      yum:
+        name: "filebeat-{{ elastic_version }}"
+        state: present
+      register: filebeat_yum
+      until: filebeat_yum is succeeded
+      retries: 3
+      delay: 5
+
+    # The shared elk/filebeat.yml reads the Logstash address from
+    # ${LOGSTASH_HOST}; on hosts it comes from this systemd drop-in.
+    - name: Install the Filebeat configuration
+      template:
+        src: "{{ playbook_dir }}/../elk/filebeat.yml"
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: 0600
+      notify: Restart filebeat
+
+    - name: Create the Filebeat unit drop-in directory
+      file:
+        path: /etc/systemd/system/filebeat.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Point Filebeat at the Logstash host
+      copy:
+        content: |
+          [Service]
+          Environment="LOGSTASH_HOST={{ logstash_host }}"
+        dest: /etc/systemd/system/filebeat.service.d/logstash.conf
+        owner: root
+        group: root
+        mode: 0644
+      notify: Restart filebeat
+
+    - name: Enable and start Filebeat
+      systemd:
+        name: filebeat
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      when: filebeat_manage_service | bool
+
+  handlers:
+    - name: Restart filebeat
+      systemd:
+        name: filebeat
+        state: restarted
+        daemon_reload: yes
+      when: filebeat_manage_service | bool
+
+# Illustrative only: the lab runs ELK from the official 6.3.2 Docker images,
+# so this play is syntax-checked and linted but not executed in tests.
 - name: Deploy ELK server
   hosts: elk_server
+  become: yes
   gather_facts: no
   tags: [elk]
 
   tasks:
-    - name: Placeholder until the ELK play is implemented
-      debug:
-        msg: "ELK server example play is added in T13"
+    - name: Import the Elastic GPG key
+      rpm_key:
+        key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+
+    - name: Add the Elastic 6.x yum repository
+      yum_repository:
+        name: elastic-6.x
+        description: Elastic repository for 6.x packages
+        baseurl: https://artifacts.elastic.co/packages/6.x/yum
+        gpgcheck: yes
+        gpgkey: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        enabled: yes
+
+    - name: Install Elasticsearch, Logstash and Kibana at the pinned version
+      yum:
+        name:
+          - "elasticsearch-{{ elastic_version }}"
+          - "logstash-{{ elastic_version }}"
+          - "kibana-{{ elastic_version }}"
+        state: present
+
+    - name: Create the Logstash template directory
+      file:
+        path: /etc/logstash/templates
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Install the security pipeline and index template
+      copy:
+        src: "{{ playbook_dir }}/../elk/{{ item.src }}"
+        dest: "/etc/logstash/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: 0644
+      with_items:
+        - {src: logstash.conf, dest: conf.d/security.conf}
+        - {src: es-template.json, dest: templates/security.json}
+
+    - name: Enable and start the ELK services
+      systemd:
+        name: "{{ item }}"
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      with_items:
+        - elasticsearch
+        - logstash
+        - kibana
