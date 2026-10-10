@@ -93,6 +93,9 @@ def drop_untyped_indices():
     The fixture lines are re-injected each run, so nothing is lost.
     """
     resp = requests.get(ES_URL + "/security-*/_mapping/field/src_ip", timeout=10)
+    if resp.status_code == 404:
+        # No security-* index exists yet (a fresh lab volume).
+        return
     resp.raise_for_status()
     for name, body in resp.json().items():
         specs = [spec["mapping"]["src_ip"]["type"]

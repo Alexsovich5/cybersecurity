@@ -532,7 +532,8 @@ shared config, and pin the illustrative ELK server play to 6.3.2.
   - `snort` runs its live CMD with a static IP `172.48.0.10`;
   - `tests` gets static IP `172.48.0.20`, `cap_add: [NET_RAW]`, and mounts `ossec-input:/lab/ossec-input`;
   - `ossec` runs its entrypoint;
-  - `depends_on` with `condition: service_healthy` for elasticsearch.
+  - `depends_on` with `condition: service_healthy` for elasticsearch;
+  - the `lab` network's IPAM gets `ip_range: 172.48.0.128/25`, so dynamically addressed containers (Docker allocates serially, and `target` is recreated often) never take `.10` or `.20`.
 - modify `Makefile`:
   - `lab-up` runs `$(COMPOSE) up -d elasticsearch logstash kibana filebeat mailhog snort ossec target`;
   - `lab-down` runs `$(COMPOSE) down -v`;

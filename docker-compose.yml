@@ -7,6 +7,9 @@ networks:
     ipam:
       config:
         - subnet: 172.48.0.0/24
+          # Dynamic addresses come from the upper half, so they never take
+          # the fixed addresses of snort (.10) and tests (.20).
+          ip_range: 172.48.0.128/25
 
 volumes:
   lab-keys:
@@ -31,8 +34,13 @@ services:
       - lab-logs:/lab/logs/system
       - snort-logs:/lab/logs/snort
       - ossec-logs:/lab/logs/ossec
+      - ossec-input:/lab/ossec-input
+    cap_add:
+      - NET_RAW
     environment:
       ES_URL: http://elasticsearch:9200
+      OSSEC_INPUT: /lab/ossec-input/secure
+      SNORT_HOST: snort
       SNORT_ALERT: /lab/logs/snort/alert
       OSSEC_ALERTS: /lab/logs/ossec/alerts.json
       SECURE_LOG: /lab/logs/system/secure
@@ -41,7 +49,8 @@ services:
       PFSENSE_HOST: logstash
       PFSENSE_PORT: "5140"
     networks:
-      - lab
+      lab:
+        ipv4_address: 172.48.0.20
 
   base:
     build:
@@ -79,8 +88,11 @@ services:
       - snort-logs:/var/log/snort
       - pcaps:/lab/pcaps:ro
       - ./tests:/src/tests:ro
+    command: ["snort", "-i", "eth0", "-c", "/etc/snort/snort.conf", "-l", "/var/log/snort",
+              "-A", "fast", "-k", "none", "-q"]
     networks:
-      - lab
+      lab:
+        ipv4_address: 172.48.0.10
 
   ossec:
     build:
@@ -92,6 +104,7 @@ services:
       - ossec-logs:/var/ossec/logs/alerts
       - ossec-input:/var/log/lab
       - ./tests:/src/tests:ro
+    command: ["/usr/local/bin/entrypoint.sh"]
     networks:
       - lab
 
@@ -175,6 +188,9 @@ services:
       - ossec-logs:/lab/logs/ossec:ro
       - filebeat-data:/usr/share/filebeat/data
     depends_on:
-      - logstash
+      elasticsearch:
+        condition: service_healthy
+      logstash:
+        condition: service_started
     networks:
       - lab

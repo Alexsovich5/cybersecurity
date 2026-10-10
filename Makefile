@@ -1,13 +1,14 @@
 COMPOSE ?= docker compose
 RUN_TESTS = $(COMPOSE) run --rm tests
 
-.PHONY: build test test-static test-unit test-base test-harden test-snort test-ossec test-ansible test-pipeline shell clean
+.PHONY: build test test-static test-unit test-base test-harden test-snort test-ossec test-ansible test-pipeline \
+	test-e2e lab-up lab-down demo shell clean
 
 build:
 	$(COMPOSE) build base
 	$(COMPOSE) build
 
-test: test-static test-unit test-base test-harden test-snort test-ossec test-ansible test-pipeline
+test: test-static test-unit test-base test-harden test-snort test-ossec test-ansible test-pipeline test-e2e
 
 test-static:
 	$(RUN_TESTS) sh -c '\
@@ -31,11 +32,11 @@ test-base:
 test-harden:
 	$(COMPOSE) run --rm --no-deps base bats tests/bats/harden_linux.bats
 
-test-snort:
+test-snort: lab-down
 	$(COMPOSE) run --rm --no-deps tests python tools/traffic.py write /lab/pcaps
 	$(COMPOSE) run --rm --no-deps snort bats /src/tests/bats/snort.bats
 
-test-ossec:
+test-ossec: lab-down
 	$(COMPOSE) run --rm --no-deps ossec bats /src/tests/bats/ossec.bats
 
 test-ansible:
@@ -54,6 +55,27 @@ test-pipeline:
 	@$(FILEBEAT_PERMS_CHECK)
 	$(RUN_TESTS) pytest tests/integration/test_pipeline.py || { $(FILEBEAT_PERMS_CHECK); exit 1; }
 	@$(LOGSTASH_REJECT_CHECK)
+
+LAB_SERVICES = elasticsearch logstash kibana filebeat mailhog snort ossec target
+
+lab-up:
+	$(COMPOSE) up -d $(LAB_SERVICES)
+
+lab-down:
+	$(COMPOSE) down -v
+
+test-e2e: lab-up
+	$(RUN_TESTS) pytest tests/integration/test_end_to_end.py
+
+ES_COUNTS = import requests; print(requests.get("http://elasticsearch:9200/_cat/indices/security-*", \
+	params={"v": "true", "h": "index,docs.count", "s": "index"}, timeout=10).text)
+
+demo: lab-up
+	$(RUN_TESTS) python tools/traffic.py send snort
+	$(RUN_TESTS) python tools/pfsense_sim.py --host logstash --port 5140
+	$(RUN_TESTS) sh -c 'cat tests/fixtures/secure_auth_failures.log >> /lab/ossec-input/secure'
+	sleep 15
+	$(RUN_TESTS) python -c '$(ES_COUNTS)'
 
 shell:
 	$(RUN_TESTS) bash
