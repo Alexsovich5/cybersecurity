@@ -605,7 +605,9 @@ sensors within a window, and emit table, JSON or Ansible vars.
 - modify `Makefile`:
   - `test-e2e` also runs `test_response.py`;
   - `test-static` adds a syntax check and ansible-lint for `respond_block_ip.yml`;
-  - `demo` ends with `correlate.py --format ansible > out/blocklist.json` and the response play.
+  - `demo` ends with `correlate.py --format ansible > out/blocklist.json` and the response play;
+  - `demo` appends the auth fixture with its syslog prefix replaced by the current UTC time (`sed` + `date -u`), because Logstash dates OSSEC alerts from that prefix and the fixture's fixed date would fall outside `correlate.py --since 15m`. `test_response.py` restamps the lines it injects the same way.
+- the play targets `{{ respond_hosts | default('targets') }}`.
 
 **Tests to write first:** `test_response.py`:
 - `ansible-lint ansible/respond_block_ip.yml` (with the repo `.ansible-lint`) exits 0, and the playbook contains no `skip_ansible_lint` tag;

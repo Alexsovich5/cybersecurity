@@ -20,6 +20,8 @@ test-static:
 		ansible-playbook --syntax-check --tags elk ansible/hardening.yml && \
 		ansible-playbook --list-tasks --tags elk ansible/hardening.yml && \
 		ansible-lint ansible/hardening.yml && \
+		ansible-playbook -i localhost, --syntax-check ansible/respond_block_ip.yml && \
+		ansible-lint ansible/respond_block_ip.yml && \
 		python -m py_compile tools/*.py && \
 		python -m json.tool elk/es-template.json > /dev/null'
 
@@ -65,7 +67,8 @@ lab-down:
 	$(COMPOSE) down -v
 
 test-e2e: lab-up
-	$(RUN_TESTS) pytest tests/integration/test_end_to_end.py tests/integration/test_correlate_es.py
+	$(RUN_TESTS) pytest tests/integration/test_end_to_end.py tests/integration/test_correlate_es.py \
+		tests/integration/test_response.py
 
 ES_COUNTS = import requests; print(requests.get("http://elasticsearch:9200/_cat/indices/security-*", \
 	params={"v": "true", "h": "index,docs.count", "s": "index"}, timeout=10).text)
@@ -73,9 +76,12 @@ ES_COUNTS = import requests; print(requests.get("http://elasticsearch:9200/_cat/
 demo: lab-up
 	$(RUN_TESTS) python tools/traffic.py send snort
 	$(RUN_TESTS) python tools/pfsense_sim.py --host logstash --port 5140
-	$(RUN_TESTS) sh -c 'cat tests/fixtures/secure_auth_failures.log >> /lab/ossec-input/secure'
+	$(RUN_TESTS) sh -c 'sed "s/^.\{15\}/$$(date -u "+%b %e %H:%M:%S")/" tests/fixtures/secure_auth_failures.log >> /lab/ossec-input/secure'
 	sleep 15
 	$(RUN_TESTS) python -c '$(ES_COUNTS)'
+	mkdir -p out
+	$(RUN_TESTS) sh -c 'python tools/correlate.py --since 15m --format ansible > out/blocklist.json'
+	$(RUN_TESTS) ansible-playbook ansible/respond_block_ip.yml -e @out/blocklist.json
 
 shell:
 	$(RUN_TESTS) bash

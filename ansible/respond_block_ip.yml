@@ -1,0 +1,93 @@
+---
+# Blocks (or unblocks) source IPs with firewalld rich rules in a zone.
+#
+#   ansible-playbook ansible/respond_block_ip.yml -e @blocklist.json \
+#     [-e block_state=absent] [-e respond_hosts=all] [-e respond_zone=drop]
+#
+# blocklist.json is the output of tools/correlate.py --format ansible:
+# {"block_ips": ["172.48.0.20", ...]}. When firewalld is running the rules
+# are applied to the live and permanent configuration; otherwise they are
+# written to the permanent configuration with firewall-offline-cmd.
+
+- name: Block correlated source IPs with firewalld
+  hosts: "{{ respond_hosts | default('targets') }}"
+  become: yes
+  gather_facts: no
+
+  vars:
+    block_state: present
+    respond_zone: drop
+
+  tasks:
+    - name: Validate block list
+      assert:
+        that:
+          - block_ips is defined
+          - block_ips is iterable
+          - block_ips is not string
+          - block_ips is not mapping
+          - block_ips | length > 0
+          - block_state in ['present', 'absent']
+        msg: "block_ips must be a non-empty list and block_state present or absent"
+
+    - name: Validate block list entries
+      assert:
+        that:
+          - item | ipaddr
+        msg: "{{ item }} is not an IP address or network"
+      with_items: "{{ block_ips }}"
+
+    # A non-zero exit, including no D-Bus or no firewall-cmd, means the
+    # daemon is not active.
+    - name: Check whether firewalld is running
+      command: firewall-cmd --state
+      register: firewalld_state
+      changed_when: false
+      failed_when: false
+
+    - name: Apply rich rules through the running firewalld
+      firewalld:
+        zone: "{{ respond_zone }}"
+        rich_rule: >-
+          rule family="{{ 'ipv6' if item | ipv6 else 'ipv4' }}"
+          source address="{{ item }}" drop
+        permanent: true
+        immediate: true
+        state: "{{ 'enabled' if block_state == 'present' else 'disabled' }}"
+      with_items: "{{ block_ips }}"
+      when: firewalld_state.rc == 0
+
+    - name: Query existing rich rules offline
+      command: >-
+        firewall-offline-cmd --zone={{ respond_zone }}
+        --query-rich-rule='rule family="{{ 'ipv6' if item | ipv6 else 'ipv4' }}"
+        source address="{{ item }}" drop'
+      register: rich_rule_query
+      changed_when: false
+      failed_when: rich_rule_query.rc not in [0, 1]
+      with_items: "{{ block_ips }}"
+      when: firewalld_state.rc != 0
+
+    - name: Add missing rich rules offline
+      command: >-
+        firewall-offline-cmd --zone={{ respond_zone }}
+        --add-rich-rule='rule family="{{ 'ipv6' if item.item | ipv6 else 'ipv4' }}"
+        source address="{{ item.item }}" drop'
+      changed_when: item.rc == 1
+      with_items: "{{ rich_rule_query.results }}"
+      when:
+        - firewalld_state.rc != 0
+        - block_state == 'present'
+        - item.rc == 1
+
+    - name: Remove present rich rules offline
+      command: >-
+        firewall-offline-cmd --zone={{ respond_zone }}
+        --remove-rich-rule='rule family="{{ 'ipv6' if item.item | ipv6 else 'ipv4' }}"
+        source address="{{ item.item }}" drop'
+      changed_when: item.rc == 0
+      with_items: "{{ rich_rule_query.results }}"
+      when:
+        - firewalld_state.rc != 0
+        - block_state == 'absent'
+        - item.rc == 0
